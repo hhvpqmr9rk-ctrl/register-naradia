@@ -478,10 +478,14 @@ window.vrat=vrat;
 //  POHYBY
 // ════════════════════════════════════════════════════════════════
 function renderPohyby(){
-  const fS=document.getElementById('filter-stavba-pohyby')?.value||'';
-  const fT=document.getElementById('filter-typ-pohyby')?.value||'';
-  const fOd=document.getElementById('filter-datum-od')?.value||'';
-  const fDo=document.getElementById('filter-datum-do')?.value||'';
+  var elS=document.getElementById('filter-stavba-pohyby');
+var elT=document.getElementById('filter-typ-pohyby');
+var elOd=document.getElementById('filter-datum-od');
+var elDo=document.getElementById('filter-datum-do');
+const fS=elS?elS.value:'';
+const fT=elT?elT.value:'';
+const fOd=elOd?elOd.value:'';
+const fDo=elDo?elDo.value:'';
   let data=pohybyArr();
   if(fS) data=data.filter(p=>p.stavbaId===fS);
   if(fT) data=data.filter(p=>p.typ===fT);
@@ -1397,7 +1401,7 @@ svg.icon{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;str
               <input type="date" style="width:auto;padding:5px 8px;font-size:12px;font-family:var(--font);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)" onchange="renderPohyby()">
               <label style="font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0;margin:0">Do:</label>
               <input type="date" id="filter-datum-do" style="width:auto;padding:5px 8px;font-size:12px;font-family:var(--font);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)"
-              <button class="btn btn-sm" type="button" onclick="clearDateFilter()" title="Zrušiť všetky filtre">✕ Zrušiť filtre</button>
+              <button class="btn btn-sm" type="button" onclick="window.clearDateFilter()" title="Zrušiť všetky filtre">✕ Zrušiť filtre</button>
             </div>
           </div>
         </div>
