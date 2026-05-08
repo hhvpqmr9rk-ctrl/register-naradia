@@ -1,0 +1,1504 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Register náradia – Online</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script>
+// ════════════════════════════════════════════════════════════════
+//  🔧 FIREBASE KONFIGURÁCIA
+// ════════════════════════════════════════════════════════════════
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyB2gLq6UzzjpijSlaTV3HMPEq6_KJgW5RA",
+  authDomain:        "register-naradia.firebaseapp.com",
+  databaseURL:       "https://register-naradia-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId:         "register-naradia",
+  storageBucket:     "register-naradia.firebasestorage.app",
+  messagingSenderId: "931257476693",
+  appId:             "1:931257476693:web:9b766eac323100564296dc"
+};
+
+// Detekcia: ak nie sú vyplnené, zobraziť setup obrazovku
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const IS_CONFIGURED = true;
+// Compat API wrappers
+function ref(path){ return db.ref(path); }
+function set(r, val){ return r.set(val); }
+function get(r){ return r.once('value'); }
+function push(r, val){ return r.push(val); }
+function update(r, val){ return r.update(val); }
+function remove(r){ return r.remove(); }
+function onValue(r, cb){ r.on('value', snap=>cb(snap)); return function(){r.off('value');}; }
+
+// ════════════════════════════════════════════════════════════════
+//  DEFAULTNÉ DÁTA (prvé spustenie)
+// ════════════════════════════════════════════════════════════════
+const DEFAULT_DATA = {
+  naradia: {
+    n1:  {id:"n1",  name:"Vŕtačka príklepová Bosch",   unit:"ks", total:3,  kat:"Elektrické náradie"},
+    n2:  {id:"n2",  name:"Uhlová brúska Makita 125mm",  unit:"ks", total:4,  kat:"Elektrické náradie"},
+    n3:  {id:"n3",  name:"Míchačka 130L",               unit:"ks", total:2,  kat:"Elektrické náradie"},
+    n4:  {id:"n4",  name:"Rotačný laser Leica",         unit:"ks", total:1,  kat:"Meracie prístroje"},
+    n5:  {id:"n5",  name:"Nivelačný prístroj",          unit:"ks", total:1,  kat:"Meracie prístroje"},
+    n6:  {id:"n6",  name:"Rebríky hliníkové 3m",        unit:"ks", total:5,  kat:"Lešenie a rebríky"},
+    n7:  {id:"n7",  name:"Fúrik stavebný",              unit:"ks", total:4,  kat:"Ručné náradie"},
+    n8:  {id:"n8",  name:"Lopaty",                      unit:"ks", total:10, kat:"Ručné náradie"},
+    n9:  {id:"n9",  name:"Kladivo búracie SDS+",        unit:"ks", total:2,  kat:"Elektrické náradie"},
+    n10: {id:"n10", name:"Predlžovací kábel 25m",       unit:"ks", total:3,  kat:"Iné"},
+    n11: {id:"n11", name:"Ochranné helmy",              unit:"ks", total:20, kat:"Ochranné pomôcky"},
+    n12: {id:"n12", name:"Reflexné vesty",              unit:"ks", total:20, kat:"Ochranné pomôcky"},
+  },
+  stavby: {
+    BA: {id:"BA", name:"Bytovka Bratislava",    kod:"BA-2024", adresa:"Ul. Mlynská 5, Bratislava",   stav:"Aktívna"},
+    TT: {id:"TT", name:"Rodinný dom Trnava",    kod:"TT-2024", adresa:"Ul. Záhradná 12, Trnava",     stav:"Aktívna"},
+    NR: {id:"NR", name:"Priemyselná hala Nitra",kod:"NR-2025", adresa:"Priemyselná zóna, Nitra",     stav:"Aktívna"},
+  },
+  users: {
+    u1: {id:"u1", name:"Administrátor", login:"admin",    pass:"admin123",    role:"admin",  stavbaId:""},
+    u2: {id:"u2", name:"Ján Novák",     login:"jnovak",   pass:"novak123",    role:"stavby", stavbaId:"BA"},
+    u3: {id:"u3", name:"Peter Horváth", login:"phorvath", pass:"horvath123",  role:"stavby", stavbaId:"TT"},
+  },
+  site: { BA:{}, TT:{}, NR:{} },
+  pohyby: {}
+};
+
+// ════════════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════════════
+let S = { naradia:{}, stavby:{}, users:{}, site:{}, pohyby:{} };
+let currentUser = null;
+let currentStavbaId = null;
+let unsubscribers = [];
+
+// helpers – convert object to sorted array
+const arr = obj => obj ? Object.values(obj) : [];
+const naradiaArr  = () => arr(S.naradia).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+const stavbyArr   = () => arr(S.stavby).sort((a,b)=>a.kod?.localeCompare(b.kod));
+const usersArr    = () => arr(S.users);
+const pohybyArr   = () => arr(S.pohyby).sort((a,b)=>b.ts-a.ts);
+
+function naStavbe(nId){
+  return stavbyArr().reduce((s,st)=>{
+    const site=S.site[st.id]||{};
+    return s+(site[nId]||0);
+  },0);
+}
+function vSklade(nId){
+  const n=S.naradia[nId];
+  return n ? n.total - naStavbe(nId) : 0;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  FIREBASE INIT & LISTENERS
+// ════════════════════════════════════════════════════════════════
+async function initFirebase(){
+  showLoading("Pripájanie k databáze…");
+  try {
+    const snap = await get(ref("naradia"));
+    if(!snap.exists()){
+      showLoading("Prvé spustenie – nahrávanie dát…");
+      await set(ref("/"), DEFAULT_DATA);
+    }
+    const paths = ["naradia","stavby","users","site","pohyby"];
+    paths.forEach(function(path){
+      const unsub = onValue(ref(path), function(snap){
+        S[path] = snap.val() || {};
+        onDataChange(path);
+      });
+      unsubscribers.push(unsub);
+    });
+    hideLoading();
+  } catch(e){
+    hideLoading();
+    showError("Chyba pripojenia k Firebase: "+e.message);
+  }
+}
+
+function onDataChange(path){
+  // refresh UI based on what changed
+  if(!currentUser) return;
+  const active = document.querySelector('.page.active');
+  if(!active) return;
+  const id = active.id;
+  if(id==='page-sklad') renderSklad();
+  else if(id==='page-stavba') renderStavbaPage();
+  else if(id==='page-pohyby') renderPohyby();
+  else if(id==='page-naradia-mgmt') renderNaradiaMgmt();
+  else if(id==='page-stavby-mgmt') renderStavbyMgmt();
+  else if(id==='page-pouzivatelia') renderPouzivatelia();
+  renderSidebar();
+}
+
+// ════════════════════════════════════════════════════════════════
+//  DB WRITE HELPERS
+// ════════════════════════════════════════════════════════════════
+async function dbSet(path, val){ await ref(path).set(val); }
+async function dbUpdate(path, val){ await ref(path).update(val); }
+async function dbPush(path, val){ await ref(path).push(val); }
+async function dbRemove(path){ await ref(path).remove(); }
+
+// ════════════════════════════════════════════════════════════════
+//  AUTH
+// ════════════════════════════════════════════════════════════════
+function initLogin(){
+  const ls=document.getElementById('l-stavba');
+  ls.innerHTML='<option value="">— Všetky stavby —</option>'+
+    stavbyArr().map(s=>`<option value="${s.id}">${s.kod} – ${s.name}</option>`).join('');
+}
+
+function doLogin(){
+  const login=document.getElementById('l-user').value.trim();
+  const pass=document.getElementById('l-pass').value;
+  const err=document.getElementById('login-err');
+  const u=usersArr().find(x=>x.login===login && x.pass===pass);
+  if(!u){err.style.display='block';return;}
+  err.style.display='none';
+  currentUser=u;
+  // Set default stavba view - first assigned stavba
+    if(u.role==='stavby'){
+      if(u.stavbyIds&&u.stavbyIds.length) currentStavbaId=u.stavbyIds[0];
+      else currentStavbaId=u.stavbaId||'';
+    } else {
+      currentStavbaId='';
+    }
+  document.getElementById('topbar-user').textContent=u.name+(u.role==='admin'?' (Admin)':' (Stavbyvedúci)');
+  document.getElementById('topbar-online').innerHTML=`<span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--accent)"><span style="width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block"></span>Online</span>`;
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  document.getElementById('admin-section').style.display=u.role==='admin'?'block':'none';
+  renderSidebar();
+  nav('sklad');
+}
+
+function doLogout(){
+  currentUser=null;
+  document.getElementById('app').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('l-pass').value='';
+  initLogin();
+}
+
+// ════════════════════════════════════════════════════════════════
+//  NAVIGATION
+// ════════════════════════════════════════════════════════════════
+function nav(page, stavbaId){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if(stavbaId){
+    currentStavbaId=stavbaId;
+    document.getElementById('page-stavba').classList.add('active');
+    document.querySelector(`[data-stavba="${stavbaId}"]`)?.classList.add('active');
+    renderStavbaPage();
+  } else {
+    const el=document.getElementById('page-'+page);
+    if(el) el.classList.add('active');
+    document.querySelector(`[data-nav="${page}"]`)?.classList.add('active');
+    if(page==='sklad') renderSklad();
+    if(page==='pohyby') renderPohyby();
+    if(page==='naradia-mgmt') renderNaradiaMgmt();
+    if(page==='stavby-mgmt') renderStavbyMgmt();
+    if(page==='pouzivatelia') renderPouzivatelia();
+  }
+}
+window.nav = nav;
+
+function renderSidebar(){
+  var allowedIds = [];
+  if(currentUser && currentUser.role !== 'admin'){
+    if(currentUser.stavbyIds && currentUser.stavbyIds.length){
+      allowedIds = currentUser.stavbyIds;
+    } else if(currentUser.stavbaId){
+      allowedIds = [currentUser.stavbaId];
+    }
+  }
+  const stavbyToShow = currentUser?.role==='admin'
+    ? stavbyArr()
+    : stavbyArr().filter(function(s){ return allowedIds.length===0 || allowedIds.indexOf(s.id)>=0; });
+
+  const filt=document.getElementById('filter-stavba-pohyby');
+  if(filt) filt.innerHTML='<option value="">Všetky stavby</option>'+
+    stavbyArr().map(s=>`<option value="${s.id}">${s.kod}</option>`).join('');
+
+  document.getElementById('sidebar-stavby').innerHTML=stavbyToShow.map(s=>{
+    const site=S.site[s.id]||{};
+    const total=naradiaArr().reduce((sum,n)=>sum+(site[n.id]||0),0);
+    const dot=total>0?'#BA7517':'#1D9E75';
+    return `<button class="nav-item" data-stavba="${s.id}" onclick="nav('stavba','${s.id}')">
+      <span class="nav-dot" style="background:${dot}"></span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.kod}</span>
+      ${total>0?`<span style="font-size:11px;background:#F5EED8;color:#7A5018;padding:1px 6px;border-radius:99px">${total}</span>`:''}
+    </button>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════════
+//  SKLAD
+// ════════════════════════════════════════════════════════════════
+function renderSklad(){
+  const naradia=naradiaArr();
+  const volne=naradia.filter(n=>vSklade(n.id)>0).length;
+  const vydane=naradia.filter(n=>naStavbe(n.id)>0).length;
+  const prazdne=naradia.filter(n=>vSklade(n.id)===0).length;
+
+  document.getElementById('sklad-metrics').innerHTML=`
+    <div class="metric"><div class="metric-label">Celkom položiek</div><div class="metric-val">${naradia.length}</div></div>
+    <div class="metric"><div class="metric-label">Dostupné</div><div class="metric-val green">${volne}</div></div>
+    <div class="metric"><div class="metric-label">Na stavbách</div><div class="metric-val amber">${vydane}</div></div>
+    <div class="metric"><div class="metric-label">Vypredané</div><div class="metric-val red">${prazdne}</div></div>
+    <div class="metric"><div class="metric-label">Aktívne stavby</div><div class="metric-val blue">${stavbyArr().filter(s=>s.stav==='Aktívna').length}</div></div>`;
+
+  const tbody=document.querySelector('#sklad-table tbody');
+  tbody.innerHTML=naradia.map((n,i)=>{
+    const vs=vSklade(n.id), ns=naStavbe(n.id);
+    const badge=vs===0?'badge-red':vs<n.total?'badge-amber':'badge-green';
+    const stav=vs===0?'Vypredané':vs<n.total?'Čiastočne':'Dostupné';
+    return `<tr>
+      <td style="color:var(--text3);font-family:var(--mono);font-size:12px">${i+1}</td>
+      <td><strong>${n.name}</strong><br><span style="font-size:11px;color:var(--text3)">${n.kat||''}</span></td>
+      <td>${n.unit}</td>
+      <td style="font-family:var(--mono)">${n.total}</td>
+      <td style="font-family:var(--mono);font-weight:600;color:${vs===0?'var(--danger)':vs<n.total?'var(--warn)':'var(--accent)'}">${vs}</td>
+      <td style="font-family:var(--mono)">${ns}</td>
+      <td><span class="badge ${badge}">${stav}</span></td>
+    </tr>`;
+  }).join('');
+
+  populateSkladSelects();
+  // Výdaj a príjem dostupný len pre admina
+  var formsEl = document.getElementById('sklad-forms-admin');
+  if(formsEl) formsEl.style.display = currentUser && currentUser.role==='admin' ? 'grid' : 'none';
+}
+
+function populateSkladSelects(){
+  const vn=document.getElementById('sk-v-n');
+  const vs=document.getElementById('sk-v-s');
+  const rn=document.getElementById('sk-r-n');
+  if(!vn) return;
+  const naradia=naradiaArr();
+  vn.innerHTML=naradia.map(n=>`<option value="${n.id}">${n.name} (sklad: ${vSklade(n.id)} ${n.unit})</option>`).join('');
+  rn.innerHTML=naradia.map(n=>`<option value="${n.id}">${n.name}</option>`).join('');
+  vs.innerHTML=stavbyArr().map(s=>`<option value="${s.id}">${s.kod} – ${s.name}</option>`).join('');
+  rn.onchange=refreshReturnQty;
+  refreshReturnQty();
+}
+
+function refreshReturnQty(){
+  const rn=document.getElementById('sk-r-n');
+  const rs=document.getElementById('sk-r-s');
+  const info=document.getElementById('sk-r-info');
+  if(!rn||!rs||!info) return;
+  const nId=rn.value;
+  const prevSid=rs.value;
+  const stavbyMajuce=stavbyArr().filter(s=>((S.site[s.id]||{})[nId]||0)>0);
+  rs.innerHTML=stavbyMajuce.length
+    ? stavbyMajuce.map(s=>`<option value="${s.id}">${s.kod} – ${s.name} (${(S.site[s.id]||{})[nId]} ks)</option>`).join('')
+    : '<option value="">— Žiadna stavba nemá toto náradie —</option>';
+  if(stavbyMajuce.find(s=>s.id===prevSid)) rs.value=prevSid;
+  const sid=rs.value;
+  const qty=sid?((S.site[sid]||{})[nId]||0):0;
+  const n=S.naradia[nId];
+  info.textContent=stavbyMajuce.length===0
+    ?'Toto náradie nie je momentálne na žiadnej stavbe'
+    :'Na stavbe sa nachádza: '+qty+' '+(n?n.unit:'ks');
+  info.style.color=stavbyMajuce.length===0?'var(--text3)':'var(--accent)';
+}
+window.refreshReturnQty=refreshReturnQty;
+
+async function vydajZoSkladu(){
+  const nId=document.getElementById('sk-v-n').value;
+  const sid=document.getElementById('sk-v-s').value;
+  const qty=parseInt(document.getElementById('sk-v-q').value)||0;
+  const osoba=document.getElementById('sk-v-o').value.trim();
+  const pozn=document.getElementById('sk-v-p').value.trim();
+  if(!sid){toast('Vyberte stavbu','err');return;}
+  if(qty<=0){toast('Zadajte platné množstvo','err');return;}
+  if(vSklade(nId)<qty){toast('V sklade je len '+vSklade(nId)+' ks!','err');return;}
+  const cur=((S.site[sid]||{})[nId]||0);
+  const n=S.naradia[nId];
+  const stavba=S.stavby[sid];
+  try{
+    await dbUpdate('site/'+sid, {[nId]: cur+qty});
+    await dbPush('pohyby', {typ:'vydaj',stavbaId:sid,naradieId:nId,qty,osoba,poznamka:pozn,
+      cas:now(),ts:Date.now(),user:currentUser?.name||'',naradia:n?.name||'',stavba:stavba?.name||''});
+    toast('Vydané: '+qty+' × '+n?.name+' → '+stavba?.kod,'ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.vydajZoSkladu=vydajZoSkladu;
+
+async function vratDoSkladu(){
+  const nId=document.getElementById('sk-r-n').value;
+  const sid=document.getElementById('sk-r-s').value;
+  const qty=parseInt(document.getElementById('sk-r-q').value)||0;
+  const stav=document.getElementById('sk-r-stav').value;
+  const pozn=document.getElementById('sk-r-p').value.trim();
+  if(!sid){toast('Vyberte stavbu','err');return;}
+  if(qty<=0){toast('Zadajte platné množstvo','err');return;}
+  const onSite=((S.site[sid]||{})[nId]||0);
+  if(onSite<qty){toast('Na stavbe je len '+onSite+' ks!','err');return;}
+  const n=S.naradia[nId];
+  const stavba=S.stavby[sid];
+  try{
+    await dbUpdate('site/'+sid, {[nId]: onSite-qty});
+    await dbPush('pohyby', {typ:'vratenie',stavbaId:sid,naradieId:nId,qty,stav,poznamka:pozn,
+      cas:now(),ts:Date.now(),user:currentUser?.name||'',naradia:n?.name||'',stavba:stavba?.name||''});
+    toast('Vrátené: '+qty+' × '+n?.name+' ← '+stavba?.kod,'ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.vratDoSkladu=vratDoSkladu;
+
+// ════════════════════════════════════════════════════════════════
+//  STAVBA DETAIL
+// ════════════════════════════════════════════════════════════════
+function renderStavbaPage(){
+  const stavba=S.stavby[currentStavbaId];
+  if(!stavba) return;
+  document.getElementById('stavba-page-title').textContent=stavba.name;
+  document.getElementById('stavba-page-sub').textContent=`${stavba.kod} · ${stavba.adresa||''} · ${stavba.stav}`;
+  const site=S.site[stavba.id]||{};
+  const naradia=naradiaArr();
+  const totalOnSite=naradia.reduce((s,n)=>s+(site[n.id]||0),0);
+  const poloziek=naradia.filter(n=>(site[n.id]||0)>0).length;
+  const pohybyStavby=pohybyArr().filter(p=>p.stavbaId===stavba.id);
+
+  document.getElementById('stavba-alert').innerHTML=totalOnSite>0
+    ?`<div class="alert alert-warn">⚠ Na stavbe sa nachádza <strong>${totalOnSite} ks</strong> náradia (${poloziek} položiek)</div>`
+    :`<div class="alert alert-green">✔ Všetko náradie bolo vrátené do skladu</div>`;
+
+  document.getElementById('stavba-metrics').innerHTML=`
+    <div class="metric"><div class="metric-label">Na stavbe (ks)</div><div class="metric-val amber">${totalOnSite}</div></div>
+    <div class="metric"><div class="metric-label">Položiek</div><div class="metric-val">${poloziek}</div></div>
+    <div class="metric"><div class="metric-label">Pohybov celkom</div><div class="metric-val blue">${pohybyStavby.length}</div></div>`;
+
+  // Výdaj a príjem len pre admina
+  const canEdit = currentUser && currentUser.role==='admin';
+
+  const naradieNaStavbe=naradia.filter(n=>(site[n.id]||0)>0);
+
+  document.getElementById('stavba-forms').innerHTML=canEdit?`
+    <div class="card">
+      <div class="card-title">Vydať zo skladu</div>
+      <div style="margin-bottom:8px"><label>Náradie</label>
+        <select id="v-n-${stavba.id}">${naradia.map(n=>`<option value="${n.id}">${n.name} (sklad: ${vSklade(n.id)} ${n.unit})</option>`).join('')}</select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div><label>Množstvo</label><input type="number" id="v-q-${stavba.id}" min="1" value="1"></div>
+        <div><label>Zodpovedná osoba</label><input type="text" id="v-o-${stavba.id}" placeholder="Meno" value="${currentUser?.name||''}"></div>
+      </div>
+      <div style="margin-bottom:10px"><label>Poznámka</label><input type="text" id="v-p-${stavba.id}" placeholder="Voliteľná"></div>
+      <button class="btn btn-warn" style="width:100%;justify-content:center" onclick="vydaj('${stavba.id}')">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg> Vydať zo skladu
+      </button>
+    </div>
+    <div class="card">
+      <div class="card-title">Vrátiť do skladu</div>
+      <div style="margin-bottom:8px"><label>Náradie (iba evidované na stavbe)</label>
+        <select id="r-n-${stavba.id}">${
+          naradieNaStavbe.length
+            ? naradieNaStavbe.map(n=>`<option value="${n.id}">${n.name} (${site[n.id]||0} ks)</option>`).join('')
+            : '<option value="">— Žiadne náradie na stavbe —</option>'
+        }</select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div><label>Množstvo</label><input type="number" id="r-q-${stavba.id}" min="1" value="1"></div>
+        <div><label>Stav náradia</label>
+          <select id="r-s-${stavba.id}"><option>Dobrý</option><option>Poškodený</option><option>Chýba</option><option>Skontrolovať</option></select>
+        </div>
+      </div>
+      <div style="margin-bottom:10px"><label>Poznámka</label><input type="text" id="r-p-${stavba.id}" placeholder="Voliteľná"></div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="vrat('${stavba.id}')" ${!naradieNaStavbe.length?'disabled':''}>
+        <svg class="icon" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg> Vrátiť do skladu
+      </button>
+    </div>`:
+    `<div class="alert alert-warn" style="grid-column:1/-1">Nemáte oprávnenie na výdaj/vrátenie pre túto stavbu.</div>`;
+
+  const tbody=document.querySelector('#stavba-table tbody');
+  if(naradieNaStavbe.length===0){
+    tbody.innerHTML='<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text3)">Žiadne náradie nie je evidované na tejto stavbe</td></tr>';
+  } else {
+    tbody.innerHTML=naradieNaStavbe.map((n,i)=>{
+      const qty=site[n.id]||0;
+      return `<tr class="on-site">
+        <td style="color:var(--text3);font-family:var(--mono);font-size:12px">${i+1}</td>
+        <td><strong>${n.name}</strong></td>
+        <td>${n.unit}</td>
+        <td style="font-family:var(--mono);font-weight:600;color:var(--warn)">${qty}</td>
+        <td><span class="badge badge-amber">Na stavbe</span></td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+async function vydaj(sid){
+  const nId=document.getElementById(`v-n-${sid}`).value;
+  const qty=parseInt(document.getElementById(`v-q-${sid}`).value)||0;
+  const osoba=document.getElementById(`v-o-${sid}`).value.trim();
+  const pozn=document.getElementById(`v-p-${sid}`).value.trim();
+  if(qty<=0){toast('Zadajte platné množstvo','err');return;}
+  if(vSklade(nId)<qty){toast('V sklade je len '+vSklade(nId)+' ks!','err');return;}
+  const cur=((S.site[sid]||{})[nId]||0);
+  const n=S.naradia[nId];
+  const stavba=S.stavby[sid];
+  try{
+    await dbUpdate('site/'+sid, {[nId]: cur+qty});
+    await dbPush('pohyby',{typ:'vydaj',stavbaId:sid,naradieId:nId,qty,osoba,poznamka:pozn,
+      cas:now(),ts:Date.now(),user:currentUser?.name||'',naradia:n?.name||'',stavba:stavba?.name||''});
+    toast('Vydané: '+qty+' × '+n?.name,'ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.vydaj=vydaj;
+
+async function vrat(sid){
+  const nId=document.getElementById(`r-n-${sid}`).value;
+  const qty=parseInt(document.getElementById(`r-q-${sid}`).value)||0;
+  const stav=document.getElementById(`r-s-${sid}`).value;
+  const pozn=document.getElementById(`r-p-${sid}`).value.trim();
+  if(!nId||nId===''){toast('Žiadne náradie na vrátenie','err');return;}
+  if(qty<=0){toast('Zadajte platné množstvo','err');return;}
+  const onSite=((S.site[sid]||{})[nId]||0);
+  if(onSite<qty){toast('Na stavbe je len '+onSite+' ks!','err');return;}
+  const n=S.naradia[nId];
+  const stavba=S.stavby[sid];
+  try{
+    await dbUpdate('site/'+sid, {[nId]: onSite-qty});
+    await dbPush('pohyby',{typ:'vratenie',stavbaId:sid,naradieId:nId,qty,stav,poznamka:pozn,
+      cas:now(),ts:Date.now(),user:currentUser?.name||'',naradia:n?.name||'',stavba:stavba?.name||''});
+    toast('Vrátené: '+qty+' × '+n?.name,'ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.vrat=vrat;
+
+// ════════════════════════════════════════════════════════════════
+//  POHYBY
+// ════════════════════════════════════════════════════════════════
+function renderPohyby(){
+  const fS=document.getElementById('filter-stavba-pohyby')?.value||'';
+  const fT=document.getElementById('filter-typ-pohyby')?.value||'';
+  const fOd=document.getElementById('filter-datum-od')?.value||'';
+  const fDo=document.getElementById('filter-datum-do')?.value||'';
+  let data=pohybyArr();
+  if(fS) data=data.filter(p=>p.stavbaId===fS);
+  if(fT) data=data.filter(p=>p.typ===fT);
+  if(fOd) data=data.filter(function(p){
+    // cas format: "d. m. yyyy hh:mm" - use ts (timestamp) for reliable comparison
+    if(p.ts) return p.ts >= new Date(fOd).getTime();
+    return true;
+  });
+  if(fDo) data=data.filter(function(p){
+    if(p.ts) return p.ts <= new Date(fDo+'T23:59:59').getTime();
+    return true;
+  });
+  // Show active filter info
+  var filterInfo='';
+  if(fOd||fDo) filterInfo='Obdobie: '+(fOd?formatDate(fOd):'začiatok')+' – '+(fDo?formatDate(fDo):'dnes')+' ('+data.length+' záznamov)';
+  var infoEl=document.getElementById('pohyby-filter-info');
+  if(infoEl) infoEl.textContent=filterInfo;
+  const el=document.getElementById('pohyby-list');
+  if(!data.length){
+    el.innerHTML='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><p>Žiadne pohyby</p></div>';
+    return;
+  }
+  el.innerHTML=data.map(p=>`
+    <div class="pohyb-row">
+      <div class="pohyb-icon ${p.typ==='vydaj'?'pohyb-vydaj':'pohyb-vrat'}">
+        ${p.typ==='vydaj'
+          ?`<svg class="icon" viewBox="0 0 24 24" style="color:var(--warn)"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>`
+          :`<svg class="icon" viewBox="0 0 24 24" style="color:var(--accent)"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>`}
+      </div>
+      <div class="pohyb-info">
+        <div class="pohyb-main">${p.naradia||'—'}</div>
+        <div class="pohyb-sub">${p.stavba||p.stavbaId} · ${p.osoba||p.stav||''} ${p.poznamka?'· '+p.poznamka:''} · ${p.user||''}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="pohyb-qty" style="color:${p.typ==='vydaj'?'var(--warn)':'var(--accent)'}">${p.typ==='vydaj'?'+':'-'}${p.qty} ks</div>
+        <div class="pohyb-time">${p.cas}</div>
+      </div>
+    </div>`).join('');
+}
+window.renderPohyby=renderPohyby;
+
+// ════════════════════════════════════════════════════════════════
+//  NARADIA MGMT
+// ════════════════════════════════════════════════════════════════
+function renderNaradiaMgmt(){
+  const tbody=document.querySelector('#naradia-mgmt-table tbody');
+  tbody.innerHTML=naradiaArr().map(function(n,i){
+    return '<tr>'
+      +'<td style="color:var(--text3);font-family:var(--mono);font-size:12px">'+(i+1)+'</td>'
+      +'<td><strong>'+n.name+'</strong><br><span style="font-size:11px;color:var(--text3)">'+(n.kat||'')+'</span>'+(n.pozn?'<br><span style="font-size:11px;color:var(--text3);font-style:italic">'+n.pozn+'</span>':'')+'</td>'
+      +'<td>'+(n.model||'<span style="color:var(--text3)">—</span>')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px">'+(n.sn||'<span style="color:var(--text3)">—</span>')+'</td>'
+      +'<td>'+n.unit+'</td>'
+      +'<td style="font-family:var(--mono)">'+n.total+'</td>'
+      +'<td style="font-family:var(--mono)">'+naStavbe(n.id)+'</td>'
+      +'<td><div style="display:flex;gap:6px">'
+      +'<button class="btn btn-sm" onclick="editNaradia(\''+(n.id)+'\')")>✏ Upraviť</button>'
+      +'<button class="btn btn-sm btn-danger" onclick="confirmDelete(\'naradia\',\''+(n.id)+'\',\''+(n.name.replace(/'/g,''))+'\')">🗑</button>'
+      +'</div></td></tr>';
+  }).join('');
+}
+
+function editNaradia(id){
+  const n=S.naradia[id];
+  document.getElementById('edit-naradia-id').value=id;
+  document.getElementById('n-name').value=n.name||'';
+  document.getElementById('n-model').value=n.model||'';
+  document.getElementById('n-sn').value=n.sn||'';
+  document.getElementById('n-unit').value=n.unit||'ks';
+  document.getElementById('n-total').value=n.total||0;
+  document.getElementById('n-kat').value=n.kat||'Iné';
+  document.getElementById('n-pozn').value=n.pozn||'';
+  // id je nastavené pred openModal - polia sa nezmažú
+  openModal('modal-add-naradia');
+}
+window.editNaradia=editNaradia;
+
+async function saveNaradia(){
+  const id=document.getElementById('edit-naradia-id').value;
+  const name=document.getElementById('n-name').value.trim();
+  const model=document.getElementById('n-model').value.trim();
+  const sn=document.getElementById('n-sn').value.trim();
+  const unit=document.getElementById('n-unit').value;
+  const total=parseInt(document.getElementById('n-total').value)||0;
+  const kat=document.getElementById('n-kat').value;
+  const pozn=document.getElementById('n-pozn').value.trim();
+  if(!name){toast('Zadajte názov náradia','err');return;}
+  const obj={name,model,sn,unit,total,kat,pozn};
+  const key=id||(Date.now().toString(36));
+  obj.id=key;
+  try{
+    await dbSet('naradia/'+key, obj);
+    S.naradia[key] = obj;
+    closeModal('modal-add-naradia');
+    renderNaradiaMgmt();
+    renderSklad();
+    toast('Náradie uložené','ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.saveNaradia=saveNaradia;
+
+// ════════════════════════════════════════════════════════════════
+//  STAVBY MGMT
+// ════════════════════════════════════════════════════════════════
+function renderStavbyMgmt(){
+  const el=document.getElementById('stavby-list-mgmt');
+  el.innerHTML=stavbyArr().map(s=>{
+    const site=S.site[s.id]||{};
+    const onSite=naradiaArr().reduce((sum,n)=>sum+(site[n.id]||0),0);
+    return `<div class="user-item">
+      <div class="user-avatar">${s.kod.slice(0,2)}</div>
+      <div class="user-info">
+        <div class="user-name">${s.name} <span class="badge ${s.stav==='Aktívna'?'badge-green':s.stav==='Dokončená'?'badge-gray':'badge-amber'}" style="margin-left:4px">${s.stav}</span></div>
+        <div class="user-role">${s.kod} · ${s.adresa||''} · ${onSite} ks na stavbe</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm" onclick="editStavba('${s.id}')">✏ Upraviť</button>
+        <button class="btn btn-sm btn-danger" onclick="confirmDelete('stavba','${s.id}','${s.name.replace(/'/g,"\\'")}')">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function editStavba(id){
+  const s=S.stavby[id];
+  document.getElementById('edit-stavba-id').value=id;
+  document.getElementById('s-name').value=s.name;
+  document.getElementById('s-kod').value=s.kod;
+  document.getElementById('s-adresa').value=s.adresa||'';
+  document.getElementById('s-stav').value=s.stav;
+  fillVedouciSelect(s.vedouci);
+  openModal('modal-add-stavba');
+}
+window.editStavba=editStavba;
+
+function fillVedouciSelect(selected){
+  document.getElementById('s-vedouci').innerHTML=
+    '<option value="">— Vybrať —</option>'+
+    usersArr().map(u=>`<option value="${u.login}" ${u.login===selected?'selected':''}>${u.name}</option>`).join('');
+}
+
+async function saveStavba(){
+  const id=document.getElementById('edit-stavba-id').value;
+  const name=document.getElementById('s-name').value.trim();
+  const kod=document.getElementById('s-kod').value.trim();
+  const adresa=document.getElementById('s-adresa').value.trim();
+  const vedouci=document.getElementById('s-vedouci').value;
+  const stav=document.getElementById('s-stav').value;
+  if(!name||!kod){toast('Zadajte názov a kód stavby','err');return;}
+  const key=id||(kod.replace(/[^a-zA-Z0-9]/g,'_'));
+  const obj={id:key,name,kod,adresa,vedouci,stav};
+  try{
+    await dbSet('stavby/'+key, obj);
+    if(!S.site[key]) await dbSet('site/'+key, {});
+    S.stavby[key] = obj;
+
+    // Ak je zadaný stavbyvedúci, automaticky mu pridaj túto stavbu
+    if(vedouci){
+      // Nájdi používateľa podľa login (vedouci = login)
+      var vedouciUser = Object.values(S.users).find(function(u){ return u.login===vedouci; });
+      if(vedouciUser){
+        var stavbyIds = vedouciUser.stavbyIds && vedouciUser.stavbyIds.length
+          ? vedouciUser.stavbyIds.slice()
+          : (vedouciUser.stavbaId ? [vedouciUser.stavbaId] : []);
+        // Pridaj stavbu len ak ju ešte nemá
+        if(stavbyIds.indexOf(key) < 0){
+          stavbyIds.push(key);
+          var updatedUser = Object.assign({}, vedouciUser, {stavbyIds: stavbyIds, stavbaId: stavbyIds[0]});
+          await dbSet('users/'+vedouciUser.id, updatedUser);
+          S.users[vedouciUser.id] = updatedUser;
+          toast('Stavba uložená a priradená stavbyvedúcemu '+vedouciUser.name,'ok');
+        } else {
+          toast('Stavba uložená','ok');
+        }
+      } else {
+        toast('Stavba uložená','ok');
+      }
+    } else {
+      toast('Stavba uložená','ok');
+    }
+
+    closeModal('modal-add-stavba');
+    renderSidebar();
+    renderStavbyMgmt();
+    renderPouzivatelia();
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.saveStavba=saveStavba;
+
+// ════════════════════════════════════════════════════════════════
+//  USERS
+// ════════════════════════════════════════════════════════════════
+function renderPouzivatelia(){
+  const el=document.getElementById('user-list');
+  el.innerHTML=usersArr().map(u=>`<div class="user-item">
+    <div class="user-avatar">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}</div>
+    <div class="user-info">
+      <div class="user-name">${u.name}
+        <span class="${u.role==='admin'?'role-admin':'role-stavby'}">${u.role==='admin'?'Administrátor':'Stavbyvedúci'}</span>
+      </div>
+      <div class="user-role">@${u.login} ${(function(){
+        // Zobraz len stavby ktoré skutočne existujú v aktuálnom zozname
+        var ids = (u.stavbyIds&&u.stavbyIds.length) ? u.stavbyIds : (u.stavbaId?[u.stavbaId]:[]);
+        var platne = ids.filter(id=>S.stavby[id]).map(id=>S.stavby[id].kod);
+        return platne.length ? '· '+platne.join(', ') : '';
+      })()}</div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-sm" onclick="editUser('${u.id}')">✏ Upraviť</button>
+      ${u.id!=='u1'?`<button class="btn btn-sm btn-danger" onclick="confirmDelete('user','${u.id}','${u.name}')">🗑</button>`:''}
+    </div>
+  </div>`).join('');
+}
+
+function editUser(id){
+  const u=S.users[id];
+  document.getElementById('edit-user-id').value=id;
+  document.getElementById('u-name').value=u.name;
+  document.getElementById('u-login').value=u.login;
+  document.getElementById('u-pass').value=u.pass;
+  document.getElementById('u-role').value=u.role;
+  // Support both old stavbaId (string) and new stavbyIds (array)
+  var sel = u.stavbyIds && u.stavbyIds.length ? u.stavbyIds : (u.stavbaId ? [u.stavbaId] : []);
+  fillUserStavbaSelect(sel);
+  toggleStavbaField();
+  // id je nastavené pred openModal - polia sa nezmažú
+  openModal('modal-add-user');
+}
+window.editUser=editUser;
+
+function fillUserStavbaSelect(selected){
+  // selected can be a string (old) or array (new)
+  var selectedArr = Array.isArray(selected) ? selected : (selected ? [selected] : []);
+  var el = document.getElementById('u-stavby-checkboxes');
+  if(!el) return;
+  el.innerHTML = stavbyArr().map(function(s){
+    var checked = selectedArr.indexOf(s.id) >= 0 ? 'checked' : '';
+    return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:13px;text-transform:none;letter-spacing:0">'
+      +'<input type="checkbox" value="'+s.id+'" '+checked+' style="width:auto;margin:0"> '
+      +s.kod+' – '+s.name+'</label>';
+  }).join('');
+}
+function getSelectedStavby(){
+  var boxes = document.querySelectorAll('#u-stavby-checkboxes input[type=checkbox]');
+  var result = [];
+  boxes.forEach(function(b){ if(b.checked) result.push(b.value); });
+  return result;
+}
+
+function toggleStavbaField(){
+  const role=document.getElementById('u-role').value;
+  document.getElementById('u-stavba-field').style.display=role==='stavby'?'block':'none';
+}
+window.toggleStavbaField=toggleStavbaField;
+
+async function saveUser(){
+  const id=document.getElementById('edit-user-id').value;
+  const name=document.getElementById('u-name').value.trim();
+  const login=document.getElementById('u-login').value.trim();
+  const pass=document.getElementById('u-pass').value;
+  const role=document.getElementById('u-role').value;
+  const stavbyIds = role==='admin' ? [] : getSelectedStavby();
+  if(!name||!login||!pass){toast('Vyplňte všetky povinné polia','err');return;}
+  const key=id||(login);
+  // Keep stavbaId for backward compat, add stavbyIds array
+  const stavbaId = stavbyIds.length===1 ? stavbyIds[0] : (stavbyIds.length>0 ? stavbyIds[0] : '');
+  const obj={id:key,name,login,pass,role,stavbaId,stavbyIds};
+  try{
+    await dbSet('users/'+key, obj);
+    S.users[key] = obj;
+    closeModal('modal-add-user');
+    renderPouzivatelia();
+    toast('Používateľ uložený','ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.saveUser=saveUser;
+
+// ════════════════════════════════════════════════════════════════
+//  DELETE
+// ════════════════════════════════════════════════════════════════
+function confirmDelete(type,id,name){
+  // Blokovanie zmazania stavby ak má evidované náradie
+  if(type==='stavba'){
+    const site=S.site[id]||{};
+    const totalOnSite=naradiaArr().reduce(function(s,n){return s+(site[n.id]||0);},0);
+    if(totalOnSite>0){
+      document.getElementById('confirm-title').textContent='Stavbu nie je možné zmazať';
+      document.getElementById('confirm-msg').textContent='Na stavbe "'+name+'" je evidovaných '+totalOnSite+' ks náradia. Pred zmazaním stavby musí byť všetko náradie vrátené do skladu.';
+      document.getElementById('confirm-ok-btn').style.display='none';
+      openModal('modal-confirm');
+      return;
+    }
+  }
+  document.getElementById('confirm-ok-btn').style.display='';
+  document.getElementById('confirm-title').textContent='Potvrdiť vymazanie';
+  document.getElementById('confirm-msg').textContent='Naozaj chcete vymazať "'+name+'"? Táto akcia je nevratná.';
+  document.getElementById('confirm-ok-btn').onclick=function(){doDelete(type,id);};
+  openModal('modal-confirm');
+}
+window.confirmDelete=confirmDelete;
+
+async function doDelete(type,id){
+  try{
+    await dbRemove(type==='naradia'?'naradia/'+id : type==='stavba'?'stavby/'+id : 'users/'+id);
+    if(type==='stavba') await dbRemove('site/'+id);
+    // Aktualizuj lokálny stav okamžite
+    if(type==='naradia') delete S.naradia[id];
+    else if(type==='stavba'){ delete S.stavby[id]; delete S.site[id]; }
+    else if(type==='user') delete S.users[id];
+    closeModal('modal-confirm');
+    renderSidebar();
+    if(type==='naradia') renderNaradiaMgmt();
+    else if(type==='stavba') renderStavbyMgmt();
+    else if(type==='user') renderPouzivatelia();
+    toast('Vymazané','ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.doDelete=doDelete;
+
+// ════════════════════════════════════════════════════════════════
+//  EXPORT
+// ════════════════════════════════════════════════════════════════
+function exportSkladExcel(){
+  const wb=XLSX.utils.book_new();
+  const data=[['#','Náradie','Jednotka','Kategória','Celkom','V sklade','Na stavbách','Stav']];
+  naradiaArr().forEach((n,i)=>{
+    const vs=vSklade(n.id),ns=naStavbe(n.id);
+    data.push([i+1,n.name,n.unit,n.kat||'',n.total,vs,ns,vs===0?'Vypredané':vs<n.total?'Čiastočne':'Dostupné']);
+  });
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  ws['!cols']=[{wch:4},{wch:35},{wch:8},{wch:22},{wch:10},{wch:10},{wch:12},{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws,'Sklad');
+  XLSX.writeFile(wb,'Sklad_'+today()+'.xlsx');
+}
+window.exportSkladExcel=exportSkladExcel;
+
+function exportSkladPDF(){
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape'});
+  doc.setFont('helvetica','bold');doc.setFontSize(14);doc.text('Centrálny sklad – stav náradia',14,16);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text('Export: '+now(),14,22);
+  doc.autoTable({startY:27,
+    head:[['#','Náradie','Jedn.','Celkom','V sklade','Na stavbách','Stav']],
+    body:naradiaArr().map((n,i)=>{const vs=vSklade(n.id),ns=naStavbe(n.id);return[i+1,n.name,n.unit,n.total,vs,ns,vs===0?'Vypredané':vs<n.total?'Čiastočne':'Dostupné']}),
+    styles:{fontSize:9},headStyles:{fillColor:[44,95,46],textColor:255,fontStyle:'bold'},
+    alternateRowStyles:{fillColor:[245,243,239]}});
+  doc.save('Sklad_'+today()+'.pdf');
+}
+window.exportSkladPDF=exportSkladPDF;
+
+function exportStavbaExcel(){
+  const stavba=S.stavby[currentStavbaId];if(!stavba)return;
+  const site=S.site[stavba.id]||{};
+  const wb=XLSX.utils.book_new();
+  const data=[['#','Náradie','Jednotka','Na stavbe','Stav']];
+  naradiaArr().filter(n=>(site[n.id]||0)>0).forEach((n,i)=>{
+    data.push([i+1,n.name,n.unit,site[n.id]||0,'Na stavbe']);
+  });
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(data),stavba.kod);
+  const ph=[['Čas','Typ','Náradie','Ks','Osoba/Stav','Poznámka']];
+  pohybyArr().filter(p=>p.stavbaId===stavba.id).forEach(p=>{
+    ph.push([p.cas,p.typ==='vydaj'?'Výdaj':'Vrátenie',p.naradia||'',p.qty,p.osoba||p.stav||'',p.poznamka||'']);
+  });
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ph),'Pohyby');
+  XLSX.writeFile(wb,stavba.kod+'_'+today()+'.xlsx');
+}
+window.exportStavbaExcel=exportStavbaExcel;
+
+function exportStavbaPDF(){
+  const stavba=S.stavby[currentStavbaId];if(!stavba)return;
+  const site=S.site[stavba.id]||{};
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF();
+  doc.setFont('helvetica','bold');doc.setFontSize(14);doc.text(stavba.name,14,16);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text(stavba.kod+' · '+now(),14,22);
+  const naradieNaStavbe=naradiaArr().filter(n=>(site[n.id]||0)>0);
+  doc.autoTable({startY:28,
+    head:[['#','Náradie','Jedn.','Na stavbe','Stav']],
+    body:naradieNaStavbe.map((n,i)=>[i+1,n.name,n.unit,site[n.id]||0,'Na stavbe']),
+    styles:{fontSize:9},headStyles:{fillColor:[44,95,46],textColor:255,fontStyle:'bold'}});
+  doc.save(stavba.kod+'_'+today()+'.pdf');
+}
+window.exportStavbaPDF=exportStavbaPDF;
+
+function clearDateFilter(){
+  var od=document.getElementById('filter-datum-od');
+  var doo=document.getElementById('filter-datum-do');
+  if(od) od.value='';
+  if(doo) doo.value='';
+  renderPohyby();
+}
+window.clearDateFilter=clearDateFilter;
+
+function formatDate(dateStr){
+  if(!dateStr) return '';
+  var d=new Date(dateStr);
+  return d.toLocaleDateString('sk-SK');
+}
+
+function getFilteredPohyby(){
+  const fS=document.getElementById('filter-stavba-pohyby')?.value||'';
+  const fT=document.getElementById('filter-typ-pohyby')?.value||'';
+  const fOd=document.getElementById('filter-datum-od')?.value||'';
+  const fDo=document.getElementById('filter-datum-do')?.value||'';
+  let data=pohybyArr();
+  if(fS) data=data.filter(p=>p.stavbaId===fS);
+  if(fT) data=data.filter(p=>p.typ===fT);
+  if(fOd) data=data.filter(function(p){ return p.ts?p.ts>=new Date(fOd).getTime():true; });
+  if(fDo) data=data.filter(function(p){ return p.ts?p.ts<=new Date(fDo+'T23:59:59').getTime():true; });
+  return data;
+}
+
+function exportPohybyExcel(){
+  const fOd=document.getElementById('filter-datum-od')?.value||'';
+  const fDo=document.getElementById('filter-datum-do')?.value||'';
+  const filtered=getFilteredPohyby();
+  const wb=XLSX.utils.book_new();
+  const info=[
+    ['REGISTER NARADIA – KANGO Stavby spol. s r.o.'],['Export pohybov naradia'],[''],
+    ['Datum exportu:',now()],
+    ['Obdobie od:',fOd?formatDate(fOd):'vsetky zaznamy'],
+    ['Obdobie do:',fDo?formatDate(fDo):'vsetky zaznamy'],
+    ['Pocet zaznamov:',filtered.length],[''],
+  ];
+  const wsInfo=XLSX.utils.aoa_to_sheet(info);
+  wsInfo['!cols']=[{wch:20},{wch:30}];
+  XLSX.utils.book_append_sheet(wb,wsInfo,'Info');
+  const data=[['Cas','Typ','Stavba','Naradia','Ks','Zodp. osoba','Stav naradia','Poznamka','Pouzivatel']];
+  filtered.forEach(function(p){
+    data.push([p.cas,p.typ==='vydaj'?'Vydaj':'Vratenie',p.stavba||'',p.naradia||'',p.qty,p.osoba||'',p.stav||'',p.poznamka||'',p.user||'']);
+  });
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  ws['!cols']=[{wch:16},{wch:10},{wch:22},{wch:30},{wch:6},{wch:18},{wch:14},{wch:24},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,ws,'Pohyby');
+  const suffix=(fOd?'_od'+fOd:'')+(fDo?'_do'+fDo:'');
+  XLSX.writeFile(wb,'Pohyby'+suffix+'_'+today()+'.xlsx');
+}
+window.exportPohybyExcel=exportPohybyExcel;
+
+function exportPohybyPDF(){
+  const fOd=document.getElementById('filter-datum-od')?.value||'';
+  const fDo=document.getElementById('filter-datum-do')?.value||'';
+  const filtered=getFilteredPohyby();
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape'});
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(14);
+  doc.text('KANGO Stavby – História pohybov náradia',14,14);
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(9);
+  var obdobie='Obdobie: '+(fOd?formatDate(fOd):'všetky záznamy')+' – '+(fDo?formatDate(fDo):'všetky záznamy');
+  doc.text(obdobie,14,20);
+  doc.text('Export: '+now()+'  |  Počet záznamov: '+filtered.length,14,25);
+  doc.autoTable({
+    startY:30,
+    head:[['Čas','Typ','Stavba','Náradie','Ks','Zodp. osoba','Stav','Poznámka']],
+    body:filtered.map(function(p){
+      return [p.cas, p.typ==='vydaj'?'Výdaj':'Vrátenie', p.stavba||'', p.naradia||'', p.qty, p.osoba||'', p.stav||'', p.poznamka||''];
+    }),
+    styles:{fontSize:8,cellPadding:2},
+    headStyles:{fillColor:[44,95,46],textColor:255,fontStyle:'bold'},
+    alternateRowStyles:{fillColor:[245,243,239]},
+    columnStyles:{4:{cellWidth:8},1:{cellWidth:16}}
+  });
+  const suffix=(fOd?'_od'+fOd:'')+(fDo?'_do'+fDo:'');
+  doc.save('Pohyby'+suffix+'_'+today()+'.pdf');
+}
+window.exportPohybyPDF=exportPohybyPDF;
+
+// ════════════════════════════════════════════════════════════════
+//  MODALS
+// ════════════════════════════════════════════════════════════════
+function openModal(id){
+  if(id==='modal-add-naradia'){
+    // Vymazať polia len ak je to nové náradie (nie editácia)
+    var editId=document.getElementById('edit-naradia-id').value;
+    if(!editId){
+      document.getElementById('n-name').value='';
+      document.getElementById('n-model').value='';
+      document.getElementById('n-sn').value='';
+      document.getElementById('n-unit').value='ks';
+      document.getElementById('n-total').value=1;
+      document.getElementById('n-kat').value='Elektrické náradie';
+      document.getElementById('n-pozn').value='';
+    }
+  }
+  if(id==='modal-add-stavba'){
+    var editStavbaId=document.getElementById('edit-stavba-id').value;
+    if(!editStavbaId){
+      // Nová stavba - vymazať polia
+      document.getElementById('s-name').value='';
+      document.getElementById('s-kod').value='';
+      document.getElementById('s-adresa').value='';
+      fillVedouciSelect('');
+      document.getElementById('s-stav').value='Aktívna';
+    }
+  }
+  if(id==='modal-add-user'){
+    var editUserId=document.getElementById('edit-user-id').value;
+    if(!editUserId){
+      // Nový používateľ - vymazať polia
+      document.getElementById('u-name').value='';
+      document.getElementById('u-login').value='';
+      document.getElementById('u-pass').value='';
+      document.getElementById('u-role').value='stavby';
+      fillUserStavbaSelect([]);
+      toggleStavbaField();
+    }
+  }
+  document.getElementById(id).classList.add('open');
+}
+window.openModal=openModal;
+
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+window.closeModal=closeModal;
+
+document.querySelectorAll('.modal-backdrop').forEach(b=>b.addEventListener('click',e=>{if(e.target===b)b.classList.remove('open');}));
+
+// ════════════════════════════════════════════════════════════════
+//  TOAST & LOADING
+// ════════════════════════════════════════════════════════════════
+let toastTimer;
+function toast(msg,type){
+  const el=document.getElementById('toast');
+  el.textContent=msg;
+  el.style.background=type==='err'?'var(--danger)':type==='ok'?'var(--accent)':'var(--text)';
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),2800);
+}
+
+function showLoading(msg){
+  document.getElementById('loading-msg').textContent=msg||'Načítava sa…';
+  document.getElementById('loading-screen').style.display='flex';
+}
+function hideLoading(){
+  document.getElementById('loading-screen').style.display='none';
+  // Show login screen after Firebase connects and data loads
+  setTimeout(function(){
+    if(!currentUser){
+      initLogin();
+      document.getElementById('login-screen').style.display='flex';
+    }
+  }, 500);
+}
+function showError(msg){
+  document.getElementById('loading-screen').style.display='none';
+  document.getElementById('setup-screen').style.display='flex';
+  document.getElementById('setup-error').textContent=msg;
+}
+
+function now(){const d=new Date();return d.toLocaleDateString('sk-SK')+' '+d.toLocaleTimeString('sk-SK',{hour:'2-digit',minute:'2-digit'});}
+function today(){return new Date().toISOString().slice(0,10);}
+
+// ════════════════════════════════════════════════════════════════
+//  LOGO
+// ════════════════════════════════════════════════════════════════
+function uploadLogo(event){
+  const file=event.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const dataUrl=e.target.result;
+    try{localStorage.setItem('company_logo',dataUrl);}catch(err){}
+    applyLogo(dataUrl);
+    toast('Logo firmy uložené','ok');
+  };
+  reader.readAsDataURL(file);
+}
+function applyLogo(dataUrl){
+  const cl=document.getElementById('company-logo');
+  const dl=document.getElementById('default-logo');
+  if(cl&&dataUrl){cl.src=dataUrl;cl.style.display='block';if(dl)dl.style.display='none';}
+}
+function loadLogo(){
+  try{const saved=localStorage.getItem('company_logo');if(saved)applyLogo(saved);}catch(e){}
+}
+
+// ════════════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════════════
+window.doLogin=doLogin;
+window.doLogout=doLogout;
+window.initLogin=initLogin;
+
+document.addEventListener('DOMContentLoaded', function(){
+  loadLogo();
+  var lpass = document.getElementById('l-pass');
+  var luser = document.getElementById('l-user');
+  var lbtn  = document.getElementById('login-btn');
+  var obtn  = document.getElementById('logout-btn');
+
+  if(lpass) lpass.addEventListener('keydown', function(e){if(e.key==='Enter') doLogin();});
+  if(luser) luser.addEventListener('keydown', function(e){if(e.key==='Enter' && lpass) lpass.focus();});
+  if(lbtn)  lbtn.addEventListener('click',  function(e){e.preventDefault(); doLogin();});
+  if(obtn)  obtn.addEventListener('click',  function(){ doLogout(); });
+
+  if(IS_CONFIGURED){
+    initFirebase();
+  } else {
+    document.getElementById('loading-screen').style.display='none';
+    document.getElementById('setup-screen').style.display='flex';
+  }
+});
+</script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F5F3EF;--surface:#FFFFFF;--surface2:#F0EDE8;--surface3:#E8E4DD;
+  --border:#D8D3CB;--border2:#C8C2B8;
+  --text:#1A1814;--text2:#5A5448;--text3:#8A8278;
+  --accent:#2C5F2E;--accent-light:#E8F0E8;--accent-text:#1A3D1C;
+  --danger:#8B2635;--danger-light:#F5E8EA;--danger-text:#6B1825;
+  --warn:#7A5C1E;--warn-light:#F5F0E0;--warn-text:#5A4010;
+  --info:#1A3D6E;--info-light:#E8EFF8;--info-text:#0E2545;
+  --radius:10px;--radius-lg:16px;--radius-sm:6px;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06);
+  --shadow-lg:0 4px 24px rgba(0,0,0,.12);
+  --font:'DM Sans',sans-serif;--mono:'DM Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;min-height:100vh}
+h2{font-size:18px;font-weight:500}h3{font-size:15px;font-weight:500}
+
+/* LOADING */
+#loading-screen,#setup-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg);flex-direction:column;gap:16px}
+.spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.setup-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:2rem;max-width:600px;width:95vw;box-shadow:var(--shadow-lg)}
+.setup-box h2{margin-bottom:8px;color:var(--accent)}
+.setup-box p{font-size:13px;color:var(--text2);margin-bottom:1rem;line-height:1.6}
+.step{display:flex;gap:12px;margin-bottom:1rem;padding:12px;background:var(--surface2);border-radius:var(--radius-sm)}
+.step-num{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-text{font-size:13px;line-height:1.6;color:var(--text)}
+.step-text code{background:var(--surface3);padding:1px 5px;border-radius:3px;font-family:var(--mono);font-size:12px}
+.setup-err{background:var(--danger-light);color:var(--danger-text);padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;margin-bottom:1rem;display:none}
+#setup-error:not(:empty){display:block}
+
+/* LOGIN */
+#login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg)}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:2.5rem;width:360px;box-shadow:var(--shadow-lg)}
+.login-logo{font-size:13px;font-weight:600;color:var(--accent);letter-spacing:.12em;text-transform:uppercase;margin-bottom:2rem;display:flex;align-items:center;gap:8px}
+.login-logo svg{width:28px;height:28px}
+.login-box h2{font-size:20px;font-weight:600;margin-bottom:6px}
+.login-box p{color:var(--text2);font-size:13px;margin-bottom:1.75rem}
+.field{margin-bottom:1rem}
+.field label{display:block;font-size:12px;font-weight:500;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
+.field input,.field select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-family:var(--font);font-size:14px}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent)}
+.login-err{background:var(--danger-light);color:var(--danger-text);border:1px solid #D9A0A8;border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;margin-bottom:1rem;display:none}
+.online-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--accent);background:var(--accent-light);padding:5px 10px;border-radius:999px;margin-bottom:1.5rem}
+.online-dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+
+/* APP */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border:1px solid var(--border2);border-radius:var(--radius-sm);background:transparent;color:var(--text);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn:hover{background:var(--surface2)}.btn:active{transform:scale(.98)}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}.btn-primary:hover{background:#245026}
+.btn-danger{background:var(--danger-light);color:var(--danger-text);border-color:#D9A0A8}
+.btn-warn{background:var(--warn-light);color:var(--warn-text);border-color:#D4C090}
+.btn-sm{padding:6px 11px;font-size:12px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+#app{display:none;min-height:100vh;flex-direction:column}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 1.5rem;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.topbar-logo{font-size:13px;font-weight:600;color:var(--accent);letter-spacing:.1em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.user-badge{font-size:12px;color:var(--text2);background:var(--surface2);padding:5px 10px;border-radius:999px;border:1px solid var(--border)}
+.layout{display:flex;flex:1}
+.sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);padding:1rem 0;flex-shrink:0;height:calc(100vh - 56px);overflow-y:auto;position:sticky;top:56px}
+.sidebar-section{padding:0 12px;margin-bottom:1.5rem}
+.sidebar-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);padding:0 8px;margin-bottom:6px}
+.nav-item{display:flex;align-items:center;gap:8px;padding:8px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;color:var(--text2);transition:all .12s;border:none;background:none;width:100%;text-align:left}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:var(--accent-light);color:var(--accent-text);font-weight:500}
+.nav-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.main{flex:1;padding:1.5rem;overflow-y:auto;max-width:1100px}
+.page{display:none}.page.active{display:block}
+.page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:10px}
+.page-title{font-size:20px;font-weight:600}.page-sub{font-size:13px;color:var(--text2);margin-top:2px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:1.5rem}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.1rem}
+.metric-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.metric-val{font-size:26px;font-weight:600;line-height:1}
+.metric-val.green{color:var(--accent)}.metric-val.red{color:var(--danger)}.metric-val.amber{color:var(--warn)}.metric-val.blue{color:var(--info)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.1rem 1.25rem;margin-bottom:1rem}
+.card-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:1rem}
+.tbl-wrap{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{padding:9px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);border-bottom:1px solid var(--border);background:var(--surface2);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--surface2)}
+.on-site td{background:#FFFBF0}.on-site:hover td{background:#FFF5D8}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:999px}
+.badge-green{background:#E0F0E0;color:#1A5C1A}.badge-red{background:#F5E0E3;color:#8B1A2A}
+.badge-amber{background:#F5EED8;color:#7A5018}.badge-gray{background:var(--surface3);color:var(--text3)}
+.badge-blue{background:#E0EAF8;color:#1A3D6E}
+input[type=text],input[type=number],input[type=password],select,textarea{width:100%;padding:8px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-family:var(--font);font-size:13px;transition:border .15s}
+input:focus,select:focus{outline:none;border-color:var(--accent)}
+label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:4px}
+.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:200;align-items:center;justify-content:center}
+.modal-backdrop.open{display:flex}
+.modal{background:var(--surface);border-radius:var(--radius-lg);padding:1.75rem;width:480px;max-width:95vw;box-shadow:var(--shadow-lg);border:1px solid var(--border)}
+.modal h3{margin-bottom:4px}.modal p{font-size:13px;color:var(--text2);margin-bottom:1.5rem}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem}
+.alert{padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;margin-bottom:1rem;border:1px solid transparent}
+.alert-warn{background:var(--warn-light);color:var(--warn-text);border-color:#D4C090}
+.alert-green{background:var(--accent-light);color:var(--accent-text);border-color:#A8C8A8}
+.pohyb-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.pohyb-row:last-child{border-bottom:none}
+.pohyb-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pohyb-vydaj{background:var(--warn-light)}.pohyb-vrat{background:var(--accent-light)}
+.pohyb-info{flex:1;min-width:0}
+.pohyb-main{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pohyb-sub{font-size:12px;color:var(--text3)}
+.pohyb-qty{font-family:var(--mono);font-size:13px;font-weight:500;white-space:nowrap}
+.pohyb-time{font-size:11px;color:var(--text3);white-space:nowrap}
+.user-list{display:flex;flex-direction:column;gap:8px}
+.user-item{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);gap:10px;flex-wrap:wrap}
+.user-avatar{width:34px;height:34px;border-radius:50%;background:var(--accent-light);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--accent-text);flex-shrink:0}
+.user-info{flex:1;min-width:0}.user-name{font-size:13px;font-weight:500}.user-role{font-size:11px;color:var(--text3)}
+.role-admin{color:var(--accent-text);background:var(--accent-light);padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500}
+.role-stavby{color:var(--info-text);background:var(--info-light);padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500}
+.empty{text-align:center;padding:3rem 1rem;color:var(--text3)}
+#toast{position:fixed;bottom:24px;right:24px;background:var(--text);color:#fff;padding:10px 18px;border-radius:var(--radius);font-size:13px;font-weight:500;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;z-index:999}
+#toast.show{opacity:1;transform:translateY(0)}
+svg.icon{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-2px;flex-shrink:0}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:99px}
+@media(max-width:600px){.sidebar{width:60px}.nav-item span:not(.nav-dot){display:none}.sidebar-label{display:none}.main{padding:.75rem}}
+</style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading-screen" style="display:flex">
+  <div class="spinner"></div>
+  <p id="loading-msg" style="color:var(--text2);font-size:14px">Pripájanie k databáze…</p>
+</div>
+
+<!-- SETUP (ak nie je nakonfigurované) -->
+<div id="setup-screen" style="display:none">
+  <div class="setup-box">
+    <h2>⚙️ Nastavenie Firebase</h2>
+    <p>Aplikácia potrebuje Firebase databázu pre zdieľanie dát v reálnom čase. Postupujte podľa krokov nižšie:</p>
+    <div id="setup-error" class="setup-err"></div>
+    <div class="step"><div class="step-num">1</div><div class="step-text">Choďte na <strong>console.firebase.google.com</strong> → Vytvoriť projekt (zadarmo, Google účet stačí)</div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-text">V projekte kliknite <strong>Realtime Database</strong> → Vytvoriť databázu → vybrať región <code>europe-west1</code> → Testovací režim (30 dní) alebo nastaviť pravidlá</div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-text">Choďte na <strong>Nastavenia projektu → Vaše aplikácie → Pridať webovú aplikáciu</strong> → skopírujte <code>firebaseConfig</code> objekt</div></div>
+    <div class="step"><div class="step-num">4</div><div class="step-text">Otvorte súbor <code>register_naradia_FIREBASE.html</code> v textovom editore (napr. Notepad++) → nájdite sekciu <code>🔧 FIREBASE KONFIGURÁCIA</code> → vložte vaše hodnoty (apiKey, databaseURL, projectId…)</div></div>
+    <div class="step"><div class="step-num">5</div><div class="step-text">Uložte súbor a otvorte ho znova v prehliadači. Dáta sa automaticky nahrajú a zdieľajú s celým tímom cez odkaz alebo QR kód.</div></div>
+    <p style="margin-top:1rem;font-size:12px;color:var(--text3)">Pre pomoc s nastavením Firebase napíšte správu v chate.</p>
+  </div>
+</div>
+
+<!-- LOGIN -->
+<div id="login-screen" style="display:none">
+  <div class="login-box">
+    <div class="login-logo">
+      <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="7" fill="#2C5F2E"/><path d="M7 14h14M14 7v14" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>
+      Register náradia
+    </div>
+    <div class="online-badge"><span class="online-dot"></span> Online – zdieľané dáta</div>
+    <h2>Prihlásenie</h2>
+    <p>Zadajte prihlasovacie údaje</p>
+    <div id="login-err" class="login-err">Nesprávne meno alebo heslo</div>
+    <div class="field"><label>Prihlasovacie meno</label><input type="text" id="l-user" placeholder="napr. admin" autocomplete="username"></div>
+    <div class="field"><label>Heslo</label><input type="password" id="l-pass" placeholder="heslo" autocomplete="current-password"></div>
+    <div class="field"><label>Stavba (voliteľné)</label><select id="l-stavba"><option value="">— Všetky stavby —</option></select></div>
+    <button class="btn btn-primary" style="width:100%;margin-top:4px;justify-content:center" onclick="doLogin()">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+      Prihlásiť sa
+    </button>
+    <p style="font-size:11px;color:var(--text3);text-align:center;margin-top:1rem">Prvé prihlásenie: admin / admin123</p>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="topbar">
+    <div class="topbar-logo">
+      <img id="company-logo" src="" alt="" style="height:32px;display:none;object-fit:contain">
+      <svg id="default-logo" viewBox="0 0 22 22" fill="none" style="width:22px;height:22px"><rect width="22" height="22" rx="5" fill="#2C5F2E"/><path d="M5 11h12M11 5v12" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Register náradia</span>
+    </div>
+    <div class="topbar-right">
+      <span id="topbar-online"></span>
+      <span class="user-badge" id="topbar-user">—</span>
+      <button class="btn btn-sm" onclick="doLogout()">Odhlásiť</button>
+    </div>
+  </div>
+  <div class="layout">
+    <div class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Prehľad</div>
+        <button class="nav-item" data-nav="sklad" onclick="nav('sklad')">
+          <svg class="icon" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+          <span>Sklad</span>
+        </button>
+        <button class="nav-item" data-nav="pohyby" onclick="nav('pohyby')">
+          <svg class="icon" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <span>Pohyby</span>
+        </button>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Stavby</div>
+        <div id="sidebar-stavby"></div>
+      </div>
+      <div class="sidebar-section" id="admin-section">
+        <div class="sidebar-label">Administrácia</div>
+        <label class="nav-item" style="cursor:pointer" title="Nahrať logo firmy">
+          <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <span>Logo firmy</span>
+          <input type="file" accept="image/*" style="display:none" onchange="uploadLogo(event)">
+        </label>
+        <button class="nav-item" onclick="nav('naradia-mgmt')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          <span>Náradie</span>
+        </button>
+        <button class="nav-item" onclick="nav('stavby-mgmt')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          <span>Stavby</span>
+        </button>
+        <button class="nav-item" onclick="nav('pouzivatelia')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>Používatelia</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="main">
+      <!-- SKLAD -->
+      <div class="page" id="page-sklad">
+        <div class="page-header">
+          <div><div class="page-title">Centrálny sklad</div><div class="page-sub">Aktuálny stav – aktualizuje sa v reálnom čase</div></div>
+          <div class="actions">
+            <button class="btn btn-sm" onclick="exportSkladExcel()">⬇ Excel</button>
+            <button class="btn btn-sm" onclick="exportSkladPDF()">⬇ PDF</button>
+          </div>
+        </div>
+        <div class="metrics" id="sklad-metrics"></div>
+        <div id="sklad-forms-admin" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
+          <div class="card">
+            <div class="card-title">Vydať zo skladu na stavbu</div>
+            <div style="margin-bottom:8px"><label>Náradie</label><select id="sk-v-n"></select></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+              <div><label>Stavba</label><select id="sk-v-s"></select></div>
+              <div><label>Množstvo</label><input type="number" id="sk-v-q" min="1" value="1"></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+              <div><label>Zodpovedná osoba</label><input type="text" id="sk-v-o" placeholder="Meno"></div>
+              <div><label>Poznámka</label><input type="text" id="sk-v-p" placeholder="Voliteľná"></div>
+            </div>
+            <button class="btn btn-warn" style="width:100%;justify-content:center" onclick="vydajZoSkladu()">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg> Vydať zo skladu
+            </button>
+          </div>
+          <div class="card">
+            <div class="card-title">Vrátiť do skladu zo stavby</div>
+            <div style="margin-bottom:8px"><label>Náradie</label><select id="sk-r-n" onchange="refreshReturnQty()"></select></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+              <div><label>Stavba (len kde je náradie)</label><select id="sk-r-s"></select></div>
+              <div><label>Množstvo</label><input type="number" id="sk-r-q" min="1" value="1"></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+              <div><label>Stav náradia</label><select id="sk-r-stav"><option>Dobrý</option><option>Poškodený</option><option>Chýba</option><option>Skontrolovať</option></select></div>
+              <div><label>Poznámka</label><input type="text" id="sk-r-p" placeholder="Voliteľná"></div>
+            </div>
+            <div id="sk-r-info" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>
+            <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="vratDoSkladu()">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg> Vrátiť do skladu
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Stav náradia</div>
+          <div class="tbl-wrap"><table id="sklad-table"><thead><tr><th>#</th><th>Náradie / príslušenstvo</th><th>Jedn.</th><th>Celkom</th><th>V sklade</th><th>Na stavbách</th><th>Stav</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- STAVBA DETAIL -->
+      <div class="page" id="page-stavba">
+        <div class="page-header">
+          <div><div class="page-title" id="stavba-page-title">Stavba</div><div class="page-sub" id="stavba-page-sub"></div></div>
+          <div class="actions">
+            <button class="btn btn-sm" onclick="exportStavbaExcel()">⬇ Excel</button>
+            <button class="btn btn-sm" onclick="exportStavbaPDF()">⬇ PDF</button>
+          </div>
+        </div>
+        <div id="stavba-alert"></div>
+        <div class="metrics" id="stavba-metrics"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem" id="stavba-forms"></div>
+        <div class="card">
+          <div class="card-title">Náradie evidované na stavbe</div>
+          <div class="tbl-wrap"><table id="stavba-table"><thead><tr><th>#</th><th>Náradie</th><th>Jedn.</th><th>Na stavbe</th><th>Stav</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- POHYBY -->
+      <div class="page" id="page-pohyby">
+        <div class="page-header">
+          <div><div class="page-title">História pohybov</div><div class="page-sub">Všetky výdaje a vrátenia – reálny čas</div></div>
+          <div class="actions">
+            <button class="btn btn-sm" onclick="exportPohybyExcel()">⬇ Excel</button>
+            <button class="btn btn-sm" onclick="exportPohybyPDF()">⬇ PDF</button>
+            <select id="filter-stavba-pohyby" style="width:auto;padding:6px 10px;font-size:12px" onchange="renderPohyby()"><option value="">Všetky stavby</option></select>
+            <select id="filter-typ-pohyby" style="width:auto;padding:6px 10px;font-size:12px" onchange="renderPohyby()"><option value="">Všetky typy</option><option value="vydaj">Výdaj</option><option value="vratenie">Vrátenie</option></select>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <label style="font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0;margin:0">Od:</label>
+              <input type="date" id="filter-datum-od" style="width:auto;padding:5px 8px;font-size:12px" onchange="renderPohyby()">
+              <label style="font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0;margin:0">Do:</label>
+              <input type="date" id="filter-datum-do" style="width:auto;padding:5px 8px;font-size:12px" onchange="renderPohyby()">
+              <button class="btn btn-sm" onclick="clearDateFilter()" title="Zrušiť filter dátumu">✕</button>
+            </div>
+          </div>
+        </div>
+        <div id="pohyby-filter-info" style="font-size:12px;color:var(--accent);margin-bottom:8px;font-weight:500"></div>
+        <div class="card"><div id="pohyby-list"></div></div>
+      </div>
+
+      <!-- NARADIA MGMT -->
+      <div class="page" id="page-naradia-mgmt">
+        <div class="page-header">
+          <div><div class="page-title">Správa náradia</div><div class="page-sub">Pridávanie a úprava náradia</div></div>
+          <button class="btn btn-primary" onclick="document.getElementById('edit-naradia-id').value='';openModal('modal-add-naradia')">+ Pridať náradie</button>
+        </div>
+        <div class="card">
+          <div class="tbl-wrap"><table id="naradia-mgmt-table"><thead><tr><th>#</th><th>Názov</th><th>Model / typ</th><th>S/N</th><th>Jedn.</th><th>Celkom</th><th>Na stavbách</th><th>Akcie</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- STAVBY MGMT -->
+      <div class="page" id="page-stavby-mgmt">
+        <div class="page-header">
+          <div><div class="page-title">Správa stavieb</div><div class="page-sub">Pridávanie a úprava stavieb</div></div>
+          <button class="btn btn-primary" onclick="document.getElementById('edit-stavba-id').value='';openModal('modal-add-stavba')">+ Pridať stavbu</button>
+        </div>
+        <div class="user-list" id="stavby-list-mgmt"></div>
+      </div>
+
+      <!-- POUZIVATELIA -->
+      <div class="page" id="page-pouzivatelia">
+        <div class="page-header">
+          <div><div class="page-title">Správa používateľov</div><div class="page-sub">Prístupy pre celý tím</div></div>
+          <button class="btn btn-primary" onclick="document.getElementById('edit-user-id').value='';openModal('modal-add-user')">+ Pridať používateľa</button>
+        </div>
+        <div class="user-list" id="user-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-backdrop" id="modal-add-naradia">
+  <div class="modal">
+    <h3>Pridať / upraviť náradie</h3><p>Zadajte detaily náradia</p>
+    <input type="hidden" id="edit-naradia-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Názov náradia</label><input type="text" id="n-name" placeholder="napr. Vŕtačka"></div>
+      <div><label>Jednotka</label><select id="n-unit"><option>ks</option><option>m</option><option>m²</option><option>kg</option><option>bal</option></select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Model / typ</label><input type="text" id="n-model" placeholder="napr. GBH 2-26 DRE"></div>
+      <div><label>Výrobné číslo (S/N)</label><input type="text" id="n-sn" placeholder="napr. SN-2024-001"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Celkový počet</label><input type="number" id="n-total" min="0" value="1"></div>
+      <div><label>Kategória</label><select id="n-kat"><option>Elektrické náradie</option><option>Ručné náradie</option><option>Meracie prístroje</option><option>Ochranné pomôcky</option><option>Lešenie a rebríky</option><option>Iné</option></select></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Poznámka / popis</label><input type="text" id="n-pozn" placeholder="napr. Záručný list v šuplíku A3"></div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal('modal-add-naradia')">Zrušiť</button><button class="btn btn-primary" onclick="saveNaradia()">Uložiť</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-add-stavba">
+  <div class="modal">
+    <h3>Pridať / upraviť stavbu</h3><p>Základné informácie o stavbe</p>
+    <input type="hidden" id="edit-stavba-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Názov stavby</label><input type="text" id="s-name" placeholder="napr. Bytovka Bratislava"></div>
+      <div><label>Kód stavby</label><input type="text" id="s-kod" placeholder="napr. BA-2025"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Adresa / popis</label><input type="text" id="s-adresa" placeholder="napr. Ul. Hlavná 12, Bratislava"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Stavbyvedúci</label><select id="s-vedouci"><option value="">— Vybrať —</option></select></div>
+      <div><label>Stav</label><select id="s-stav"><option>Aktívna</option><option>Pozastavená</option><option>Dokončená</option></select></div>
+    </div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal('modal-add-stavba')">Zrušiť</button><button class="btn btn-primary" onclick="saveStavba()">Uložiť</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-add-user">
+  <div class="modal">
+    <h3>Pridať / upraviť používateľa</h3><p>Prihlasovacie údaje a pridelená stavba</p>
+    <input type="hidden" id="edit-user-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Meno a priezvisko</label><input type="text" id="u-name" placeholder="napr. Ján Novák"></div>
+      <div><label>Prihlasovacie meno</label><input type="text" id="u-login" placeholder="napr. jnovak"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Heslo</label><input type="password" id="u-pass" placeholder="heslo"></div>
+      <div><label>Rola</label><select id="u-role" onchange="toggleStavbaField()"><option value="admin">Administrátor</option><option value="stavby">Stavbyvedúci</option></select></div>
+    </div>
+    <div id="u-stavba-field" style="margin-bottom:14px">
+      <label>Pridelené stavby (môžete vybrať viac)</label>
+      <div id="u-stavby-checkboxes" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;max-height:150px;overflow-y:auto;background:var(--surface)"></div>
+    </div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal('modal-add-user')">Zrušiť</button><button class="btn btn-primary" onclick="saveUser()">Uložiť</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-confirm">
+  <div class="modal">
+    <h3 id="confirm-title">Potvrdiť akciu</h3><p id="confirm-msg"></p>
+    <div class="modal-actions"><button class="btn" onclick="closeModal('modal-confirm')">Zrušiť</button><button class="btn btn-danger" id="confirm-ok-btn">Potvrdiť</button></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+</body>
+</html>
