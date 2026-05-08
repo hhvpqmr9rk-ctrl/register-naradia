@@ -867,11 +867,15 @@ function exportStavbaPDF(){
 window.exportStavbaPDF=exportStavbaPDF;
 
 function clearDateFilter(){
-  var od=document.getElementById('filter-datum-od');
-  var doo=document.getElementById('filter-datum-do');
-  if(od) od.value='';
-  if(doo) doo.value='';
-  renderPohyby();
+ var od=document.getElementById('filter-datum-od');
+var doo=document.getElementById('filter-datum-do');
+var fS=document.getElementById('filter-stavba-pohyby');
+var fT=document.getElementById('filter-typ-pohyby');
+if(od) od.value='';
+if(doo) doo.value='';
+if(fS) fS.value='';
+if(fT) fT.value='';
+renderPohyby();
 }
 window.clearDateFilter=clearDateFilter;
 
@@ -1390,10 +1394,10 @@ svg.icon{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;str
             <select id="filter-typ-pohyby" style="width:auto;padding:6px 10px;font-size:12px" onchange="renderPohyby()"><option value="">Všetky typy</option><option value="vydaj">Výdaj</option><option value="vratenie">Vrátenie</option></select>
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <label style="font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0;margin:0">Od:</label>
-              <input type="date" id="filter-datum-od" style="width:auto;padding:5px 8px;font-size:12px" onchange="renderPohyby()">
+              <input type="date" style="width:auto;padding:5px 8px;font-size:12px;font-family:var(--font);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)" onchange="renderPohyby()">
               <label style="font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0;margin:0">Do:</label>
-              <input type="date" id="filter-datum-do" style="width:auto;padding:5px 8px;font-size:12px" onchange="renderPohyby()">
-              <button class="btn btn-sm" onclick="clearDateFilter()" title="Zrušiť filter dátumu">✕</button>
+              <input type="date" id="filter-datum-do" style="width:auto;padding:5px 8px;font-size:12px;font-family:var(--font);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)"
+              <button class="btn btn-sm" onclick="clearDateFilter()" title="Zrušiť všetky filtre">✕ Zrušiť filtre</button>
             </div>
           </div>
         </div>
