@@ -1,0 +1,3737 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Register náradia – Online</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script>
+// ════════════════════════════════════════════════════════════════
+//  🔧 FIREBASE KONFIGURÁCIA
+// ════════════════════════════════════════════════════════════════
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyB2gLq6UzzjpijSlaTV3HMPEq6_KJgW5RA",
+  authDomain:        "register-naradia.firebaseapp.com",
+  databaseURL:       "https://register-naradia-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId:         "register-naradia",
+  storageBucket:     "register-naradia.firebasestorage.app",
+  messagingSenderId: "931257476693",
+  appId:             "1:931257476693:web:9b766eac323100564296dc"
+};
+
+const IS_CONFIGURED = true;
+let db = null;
+function ref(path){ return db.ref(path); }
+function set(r, val){ return r.set(val); }
+function get(r){ return r.once('value'); }
+function push(r, val){ return r.push(val); }
+function update(r, val){ return r.update(val); }
+function remove(r){ return r.remove(); }
+function onValue(r, cb){ r.on('value', snap=>cb(snap)); return function(){r.off('value');}; }
+
+function initFirebaseSDK(){
+  try{
+    if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    return true;
+  }catch(e){
+    console.error('Firebase SDK init error:', e);
+    return false;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  DEFAULTNÉ DÁTA (prvé spustenie)
+// ════════════════════════════════════════════════════════════════
+const DEFAULT_DATA = {
+  naradia: {
+    n1:  {id:"n1",  name:"Vŕtačka príklepová Bosch",   unit:"ks", total:3,  kat:"Elektrické náradie"},
+    n2:  {id:"n2",  name:"Uhlová brúska Makita 125mm",  unit:"ks", total:4,  kat:"Elektrické náradie"},
+    n3:  {id:"n3",  name:"Míchačka 130L",               unit:"ks", total:2,  kat:"Elektrické náradie"},
+    n4:  {id:"n4",  name:"Rotačný laser Leica",         unit:"ks", total:1,  kat:"Meracie prístroje"},
+    n5:  {id:"n5",  name:"Nivelačný prístroj",          unit:"ks", total:1,  kat:"Meracie prístroje"},
+    n6:  {id:"n6",  name:"Rebríky hliníkové 3m",        unit:"ks", total:5,  kat:"Lešenie a rebríky"},
+    n7:  {id:"n7",  name:"Fúrik stavebný",              unit:"ks", total:4,  kat:"Ručné náradie"},
+    n8:  {id:"n8",  name:"Lopaty",                      unit:"ks", total:10, kat:"Ručné náradie"},
+    n9:  {id:"n9",  name:"Kladivo búracie SDS+",        unit:"ks", total:2,  kat:"Elektrické náradie"},
+    n10: {id:"n10", name:"Predlžovací kábel 25m",       unit:"ks", total:3,  kat:"Iné"},
+    n11: {id:"n11", name:"Ochranné helmy",              unit:"ks", total:20, kat:"Ochranné pomôcky"},
+    n12: {id:"n12", name:"Reflexné vesty",              unit:"ks", total:20, kat:"Ochranné pomôcky"},
+  },
+  stavby: {
+    BA: {id:"BA", name:"Bytovka Bratislava",    kod:"BA-2024", adresa:"Ul. Mlynská 5, Bratislava",   stav:"Aktívna",
+         objekty:{o1:{id:"o1",name:"Blok A",stav:"Aktívny"},o2:{id:"o2",name:"Blok B",stav:"Aktívny"}}},
+    TT: {id:"TT", name:"Rodinný dom Trnava",    kod:"TT-2024", adresa:"Ul. Záhradná 12, Trnava",     stav:"Aktívna",
+         objekty:{o1:{id:"o1",name:"Hlavná budova",stav:"Aktívny"}}},
+    NR: {id:"NR", name:"Priemyselná hala Nitra",kod:"NR-2025", adresa:"Priemyselná zóna, Nitra",     stav:"Aktívna",
+         objekty:{}},
+  },
+  users: {
+    u1: {id:"u1", name:"Administrátor", login:"admin",      pass:"admin123",    role:"admin",     stavbaId:""},
+    u2: {id:"u2", name:"Ján Novák",     login:"jnovak",     pass:"novak123",    role:"stavby",    stavbaId:"BA"},
+    u3: {id:"u3", name:"Peter Horváth", login:"phorvath",   pass:"horvath123",  role:"stavby",    stavbaId:"TT"},
+    u4: {id:"u4", name:"Skladník",      login:"skladnik",   pass:"sklad123",    role:"skladnik",  stavbaId:""},
+  },
+  site: { BA:{}, TT:{}, NR:{} },
+  pohyby: {}
+};
+
+// ════════════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════════════
+let S = { naradia:{}, stavby:{}, users:{}, site:{}, pohyby:{} };
+let currentUser = null;
+let currentStavbaId = null;
+let unsubscribers = [];
+
+const arr = obj => obj ? Object.values(obj) : [];
+const naradiaArr  = () => arr(S.naradia).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+const stavbyArr   = () => arr(S.stavby).sort((a,b)=>a.kod?.localeCompare(b.kod));
+const usersArr    = () => arr(S.users);
+const pohybyArr   = () => arr(S.pohyby).sort((a,b)=>b.ts-a.ts);
+
+// ── POMOCNÉ FUNKCIE PRE ROLY ──────────────────────────────────
+function canEditSklad(){ return currentUser && (currentUser.role==='admin' || currentUser.role==='skladnik'); }
+function isAdmin(){ return currentUser && currentUser.role==='admin'; }
+function canViewStavba(stavbaId){
+  if(!currentUser) return false;
+  if(currentUser.role==='admin' || currentUser.role==='skladnik') return true;
+  const ids = currentUser.stavbyIds && currentUser.stavbyIds.length ? currentUser.stavbyIds : (currentUser.stavbaId ? [currentUser.stavbaId] : []);
+  return ids.includes(stavbaId);
+}
+
+// ── Pomocné funkcie pre objekty ───────────────────────────────
+// Vráti pole objektov stavby
+function objektyArr(stavbaId){
+  const s = S.stavby[stavbaId];
+  if(!s || !s.objekty) return [];
+  return Object.values(s.objekty).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+}
+
+// Generuje nové ID objektu (o1..o10)
+function nextObjektId(stavbaId){
+  const existing = Object.keys((S.stavby[stavbaId]||{}).objekty||{});
+  for(let i=1; i<=10; i++){
+    const key = 'o'+i;
+    if(!existing.includes(key)) return key;
+  }
+  return null;
+}
+
+// Koľko ks náradia je na danom objekte
+function naObjekte(stavbaId, objektId, nId){
+  const site = S.site[stavbaId]||{};
+  const obj  = site[objektId]||{};
+  return obj[nId]||0;
+}
+
+// Koľko ks náradia je celkom na stavbe (súčet cez všetky objekty + prípadná stará flat štruktúra)
+function naStavbe(nId){
+  return stavbyArr().reduce(function(sum, st){
+    const site = S.site[st.id]||{};
+    const objs = st.objekty ? Object.keys(st.objekty) : [];
+    if(objs.length > 0){
+      // Nová štruktúra: site/{stavbaId}/{objektId}/{nId}
+      return sum + objs.reduce(function(s2, oid){
+        return s2 + ((site[oid]||{})[nId]||0);
+      },0);
+    } else {
+      // Stará flat štruktúra: site/{stavbaId}/{nId}
+      return sum + (site[nId]||0);
+    }
+  },0);
+}
+
+function vSklade(nId){
+  const n=S.naradia[nId];
+  return n ? n.total - naStavbe(nId) : 0;
+}
+
+// Koľko ks náradia je celkom na stavbe (všetky objekty)
+function naStavbeCelkom(stavbaId, nId){
+  const site = S.site[stavbaId]||{};
+  const s    = S.stavby[stavbaId];
+  const objs = s && s.objekty ? Object.keys(s.objekty) : [];
+  if(objs.length > 0){
+    return objs.reduce(function(sum, oid){
+      return sum + ((site[oid]||{})[nId]||0);
+    },0);
+  }
+  return site[nId]||0;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  FIREBASE INIT & LISTENERS
+// ════════════════════════════════════════════════════════════════
+
+// Vráti nasledujúce voľné číslo náradia (max existujúce + 1)
+function getNextNaradieCislo(){
+  const cisla = Object.values(S.naradia).map(n=>parseInt(n.cislo)||0).filter(c=>c>0);
+  return cisla.length ? Math.max(...cisla)+1 : 1;
+}
+
+async function initFirebase(){
+  showLoading("Pripájanie k databáze…");
+
+  try {
+    const paths = ["naradia","stavby","users","site","pohyby"];
+    let loadedCount = 0;
+    let resolved = false;
+
+    await new Promise(function(resolve, reject){
+      // Timeout 12 sekúnd
+      const timeout = setTimeout(function(){
+        reject(new Error(
+          'Časový limit vypršal (12 s).\n\n' +
+          'Skontrolujte:\n' +
+          '1. Firebase Rules: console.firebase.google.com → Realtime Database → Pravidlá\n' +
+          '   Nastavte: ".read": true, ".write": true\n' +
+          '2. Internetové pripojenie'
+        ));
+      }, 12000);
+
+      paths.forEach(function(path){
+        const unsub = onValue(ref(path), function(snap){
+          S[path] = snap.val() || {};
+          if(path === 'naradia') migrateCisla();
+          loadedCount++;
+          // Po načítaní všetkých 5 ciest skry loading
+          if(!resolved && loadedCount >= paths.length){
+            resolved = true;
+            clearTimeout(timeout);
+            resolve();
+          }
+          // Ak je už prihlásený, aktualizuj UI
+          onDataChange(path);
+        }, function(err){
+          clearTimeout(timeout);
+          reject(new Error('Prístup odmietnutý: ' + err.message + '\n\nOpravte Firebase Rules:\nconsole.firebase.google.com → Realtime Database → Pravidlá\nNastavte: ".read": true, ".write": true'));
+        });
+        unsubscribers.push(unsub);
+      });
+    });
+
+    loadLogo(); // Načíta logo z Firebase po úspešnom pripojení
+    hideLoading();
+
+  } catch(e){
+    hideLoading();
+    showError("Chyba pripojenia: " + e.message);
+  }
+}
+
+// Jednorazová migrácia: priradí čísla všetkým náradiam bez čísla
+let _migratingCisla = false;
+async function migrateCisla(){
+  if(_migratingCisla) return;
+  const bezCisla = Object.values(S.naradia).filter(n => !n.cislo || n.cislo <= 0);
+  if(!bezCisla.length) return;
+  _migratingCisla = true;
+  // Zoradíme podľa id aby bolo číslovanie konzistentné
+  const sorted = bezCisla.sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+  const maxExisting = Math.max(0, ...Object.values(S.naradia).map(n=>parseInt(n.cislo)||0));
+  let next = maxExisting + 1;
+  const updates = {};
+  sorted.forEach(function(n){
+    updates['naradia/'+n.id+'/cislo'] = next;
+    n.cislo = next; // lokálna aktualizácia
+    next++;
+  });
+  try{ await dbUpdate('/', updates); }catch(e){ console.warn('migrateCisla error', e); }
+  _migratingCisla = false;
+}
+
+function onDataChange(path){
+  if(!currentUser) return;
+  const active = document.querySelector('.page.active');
+  if(!active) return;
+  const id = active.id;
+  if(id==='page-sklad') renderSklad();
+  else if(id==='page-stavba') renderStavbaPage();
+  else if(id==='page-pohyby') renderPohyby();
+  else if(id==='page-naradia-mgmt') renderNaradiaMgmt();
+  else if(id==='page-stavby-mgmt') renderStavbyMgmt();
+  else if(id==='page-pouzivatelia') renderPouzivatelia();
+  renderSidebar();
+}
+
+// ════════════════════════════════════════════════════════════════
+//  DB WRITE HELPERS
+// ════════════════════════════════════════════════════════════════
+async function dbSet(path, val){ await ref(path).set(val); }
+async function dbUpdate(path, val){ await ref(path).update(val); }
+async function dbPush(path, val){ await ref(path).push(val); }
+async function dbRemove(path){ await ref(path).remove(); }
+
+// ════════════════════════════════════════════════════════════════
+//  OBRÁZKY NÁRADIA – File System Access API (Chrome/Edge)
+//  Priečinok sa vyberie raz a handle sa uloží do IndexedDB
+//  aby prežil reload stránky (localStorage handle neuloží).
+//  Pri každom načítaní sa obrázky čítajú priamo z disku.
+// ════════════════════════════════════════════════════════════════
+
+// RAM cache: { [naradieId]: objectURL | '' }
+const _imgCache = {};
+// Handle na vybraný priečinok (FileSystemDirectoryHandle)
+let _dirHandle = null;
+
+// ── IndexedDB pre uloženie directory handle ──────────────────
+function openImgDB(){
+  return new Promise(function(resolve, reject){
+    const req = indexedDB.open('naradia_imgs_db', 1);
+    req.onupgradeneeded = function(e){
+      e.target.result.createObjectStore('handles');
+    };
+    req.onsuccess  = function(e){ resolve(e.target.result); };
+    req.onerror    = function(e){ reject(e.target.error); };
+  });
+}
+async function saveDirHandle(handle){
+  try{
+    const db  = await openImgDB();
+    const tx  = db.transaction('handles','readwrite');
+    tx.objectStore('handles').put(handle, 'dir');
+    await new Promise(function(res,rej){ tx.oncomplete=res; tx.onerror=rej; });
+  }catch(e){ console.warn('saveDirHandle',e); }
+}
+async function loadDirHandle(){
+  try{
+    const db  = await openImgDB();
+    const tx  = db.transaction('handles','readonly');
+    const req = tx.objectStore('handles').get('dir');
+    return await new Promise(function(res){ req.onsuccess=function(){ res(req.result||null); }; req.onerror=function(){ res(null); }; });
+  }catch(e){ return null; }
+}
+async function clearDirHandle(){
+  try{
+    const db = await openImgDB();
+    const tx = db.transaction('handles','readwrite');
+    tx.objectStore('handles').delete('dir');
+  }catch(e){}
+}
+
+// ── Načítanie všetkých obrázkov z priečinka ──────────────────
+// Hľadá súbory ktorých názov (bez prípony) obsahuje číslo karty
+async function loadImagesFromDir(){
+  if(!_dirHandle) return;
+  // Uvoľni staré object URL-s
+  Object.keys(_imgCache).forEach(function(id){
+    if(_imgCache[id]) try{ URL.revokeObjectURL(_imgCache[id]); }catch(e){}
+    _imgCache[id] = '';
+  });
+
+  // Mapa cislo → id náradia
+  const cisloToId = {};
+  naradiaArr().forEach(function(n){
+    if(n.cislo) cisloToId[String(n.cislo)] = n.id;
+  });
+
+  try{
+    const iter = _dirHandle.values();
+    while(true){
+      const result = await iter.next();
+      if(result.done) break;
+      const entry = result.value;
+      if(entry.kind !== 'file') continue;
+      const ext = entry.name.split('.').pop().toLowerCase();
+      if(!['jpg','jpeg','png','webp','gif'].includes(ext)) continue;
+      const base = entry.name.replace(/\.[^.]+$/, '').toLowerCase();
+
+      // Špeciálny prípad: logo firmy
+      if(base === 'logo'){
+        try{
+          const file = await entry.getFile();
+          const url  = URL.createObjectURL(file);
+          applyLogo(url);
+        }catch(e){}
+        continue;
+      }
+
+      const numMatch = base.match(/\d+/);
+      if(!numMatch) continue;
+      const cislo = numMatch[0].replace(/^0+/,'') || '0';
+      const nId   = cisloToId[cislo];
+      if(!nId) continue;
+      try{
+        const file = await entry.getFile();
+        if(_imgCache[nId]) try{ URL.revokeObjectURL(_imgCache[nId]); }catch(e){}
+        _imgCache[nId] = URL.createObjectURL(file);
+      }catch(e){}
+    }
+  }catch(e){
+    // Povolenie vypršalo alebo priečinok nedostupný
+    console.warn('loadImagesFromDir:', e);
+    _dirHandle = null;
+    await clearDirHandle();
+    updateFsInfoBar();
+    return;
+  }
+  updateFsInfoBar();
+  renderNaradiaMgmt();
+  refreshSkladImgPreviews();
+}
+
+// ── Verejné funkcie používané zvyškom kódu ───────────────────
+function getNaradiaImg(id){
+  return _imgCache[id] || '';
+}
+// setNaradiaImg a removeNaradiaImg sú no-op — obrázky sa neevidujú
+// cez app, len sa čítajú zo súborového systému
+function setNaradiaImg(id, dataUrl){ /* no-op – FS mode */ }
+function removeNaradiaImg(id){ /* no-op – FS mode */ }
+
+// ── Výber priečinka používateľom ─────────────────────────────
+async function pickImgFolder(){
+  if(!window.showDirectoryPicker){
+    toast('Váš prehliadač nepodporuje File System Access API. Použite Chrome alebo Edge.','err');
+    return;
+  }
+  try{
+    const handle = await window.showDirectoryPicker({ mode:'read', startIn:'pictures' });
+    _dirHandle = handle;
+    await saveDirHandle(handle);
+    toast('Priečinok nastavený: ' + handle.name,'ok');
+    await loadImagesFromDir();
+  }catch(e){
+    if(e.name !== 'AbortError') toast('Chyba: '+e.message,'err');
+  }
+}
+window.pickImgFolder = pickImgFolder;
+
+// ── Odpojenie priečinka ───────────────────────────────────────
+async function disconnectImgFolder(){
+  Object.keys(_imgCache).forEach(function(id){
+    if(_imgCache[id]) try{ URL.revokeObjectURL(_imgCache[id]); }catch(e){}
+    _imgCache[id] = '';
+  });
+  _dirHandle = null;
+  await clearDirHandle();
+  updateFsInfoBar();
+  renderNaradiaMgmt();
+  refreshSkladImgPreviews();
+  toast('Priečinok odpojený','ok');
+}
+window.disconnectImgFolder = disconnectImgFolder;
+
+// ── Obnova obrázkov (refresh z disku) ────────────────────────
+async function reloadImagesFromDir(){
+  if(!_dirHandle){ toast('Najprv vyberte priečinok s fotografiami','err'); return; }
+  // Overenie povolenia
+  try{
+    const perm = await _dirHandle.queryPermission({ mode:'read' });
+    if(perm === 'prompt'){
+      const granted = await _dirHandle.requestPermission({ mode:'read' });
+      if(granted !== 'granted'){ toast('Prístup k priečinku nebol povolený','err'); return; }
+    } else if(perm !== 'granted'){
+      toast('Prístup k priečinku bol odopretý','err'); return;
+    }
+  }catch(e){ toast('Chyba povolenia: '+e.message,'err'); return; }
+  await loadImagesFromDir();
+  toast('Obrázky obnovené z priečinka','ok');
+}
+window.reloadImagesFromDir = reloadImagesFromDir;
+
+// ── Info lišta o stave priečinka ─────────────────────────────
+function updateFsInfoBar(){
+  // Aktualizuj lištu na stránke Náradie (admin)
+  const bar = document.getElementById('ls-info-bar');
+  // Aktualizuj lištu na stránke Sklad (všetci)
+  const barSklad = document.getElementById('ls-info-bar-sklad');
+
+  const connected = !!_dirHandle;
+  const count = connected ? Object.values(_imgCache).filter(function(v){ return !!v; }).length : 0;
+
+  const connectedHtml = `
+    <span style="flex:1;color:var(--accent-text)">
+      📁 <strong>Priečinok:</strong>
+      <span style="font-weight:600">${_dirHandle ? _dirHandle.name : ''}</span>
+      &nbsp;·&nbsp; <span>${count} obrázkov načítaných</span>
+    </span>
+    <button class="btn btn-sm" onclick="reloadImagesFromDir()" title="Znovu načítať obrázky z disku">🔄 Obnoviť</button>
+    <button class="btn btn-sm btn-danger" onclick="disconnectImgFolder()">✕ Odpojiť</button>`;
+
+  const disconnectedHtml = `
+    <span style="flex:1;color:var(--info-text)">
+      📁 <strong>Fotografie náradia:</strong> Vyberte priečinok pre zobrazenie náhľadov pri výdaji a vrátení.
+    </span>
+    <button class="btn btn-sm btn-primary" onclick="pickImgFolder()">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      Vybrať priečinok
+    </button>`;
+
+  if(bar){
+    bar.style.display = 'flex';
+    bar.style.background = connected ? 'var(--accent-light)' : 'var(--info-light)';
+    bar.style.borderColor = connected ? '#A8C8A8' : '#C0CFDF';
+    bar.innerHTML = connected ? connectedHtml : disconnectedHtml.replace('Fotografie náradia:', 'Priečinok fotografií nie je nastavený.');
+  }
+  if(barSklad){
+    barSklad.style.display = 'flex';
+    barSklad.style.background = connected ? 'var(--accent-light)' : 'var(--info-light)';
+    barSklad.style.borderColor = connected ? '#A8C8A8' : '#C0CFDF';
+    barSklad.innerHTML = connected ? connectedHtml : disconnectedHtml;
+  }
+}
+window.updateFsInfoBar = updateFsInfoBar;
+function updateLsInfoBar(){ updateFsInfoBar(); }
+window.updateLsInfoBar = updateLsInfoBar;
+
+// ── Init pri štarte – obnov handle z IndexedDB ───────────────
+async function initImgFolder(){
+  const handle = await loadDirHandle();
+  if(!handle) return;
+  _dirHandle = handle;
+  // Overiť povolenie
+  try{
+    const perm = await handle.queryPermission({ mode:'read' });
+    if(perm === 'granted'){
+      await loadImagesFromDir();
+    } else {
+      // Povolenie treba znovu potvrdiť – user to uvidí cez info lištu
+      updateFsInfoBar();
+    }
+  }catch(e){
+    _dirHandle = null;
+    await clearDirHandle();
+  }
+}
+
+
+// ── Obrázok ako tooltip/preview pri hover nad názvom ────────
+function showImgPreview(id, anchorEl){
+  const src = getNaradiaImg(id);
+  var tip = document.getElementById('naradia-img-tip');
+  if(!tip){ tip=document.createElement('div'); tip.id='naradia-img-tip'; document.body.appendChild(tip); }
+  if(!src){ tip.style.display='none'; return; }
+  tip.innerHTML='<img src="'+src+'" style="max-width:220px;max-height:180px;border-radius:8px;display:block;box-shadow:0 4px 20px rgba(0,0,0,.22)">';
+  tip.style.cssText='position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:6px;box-shadow:var(--shadow-lg);display:block';
+  var r=anchorEl.getBoundingClientRect();
+  tip.style.top=(r.bottom+6)+'px';
+  tip.style.left=Math.min(r.left, window.innerWidth-240)+'px';
+}
+function hideImgPreview(){
+  var tip=document.getElementById('naradia-img-tip');
+  if(tip) tip.style.display='none';
+}
+window.showImgPreview=showImgPreview;
+window.hideImgPreview=hideImgPreview;
+
+// ════════════════════════════════════════════════════════════════
+//  AUTH
+// ════════════════════════════════════════════════════════════════
+function initLogin(){
+  const ls=document.getElementById('l-stavba');
+  ls.innerHTML='<option value="">— Všetky stavby —</option>'+
+    stavbyArr().map(s=>`<option value="${s.id}">${s.kod} – ${s.name}</option>`).join('');
+}
+
+function doLogin(){
+  const login=document.getElementById('l-user').value.trim();
+  const pass=document.getElementById('l-pass').value;
+  const err=document.getElementById('login-err');
+  const u=usersArr().find(x=>x.login===login && x.pass===pass);
+  if(!u){err.style.display='block';return;}
+  err.style.display='none';
+  currentUser=u;
+  if(u.role==='stavby'){
+    if(u.stavbyIds&&u.stavbyIds.length) currentStavbaId=u.stavbyIds[0];
+    else currentStavbaId=u.stavbaId||'';
+  } else {
+    currentStavbaId='';
+  }
+  document.getElementById('topbar-user').textContent=u.name+(
+    u.role==='admin'     ?' (Admin)'      :
+    u.role==='skladnik'  ?' (Skladník)'   :
+                          ' (Stavbyvedúci)'
+  );
+  document.getElementById('topbar-online').innerHTML=`<span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--accent)"><span style="width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block"></span>Online</span>`;
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  document.getElementById('admin-section').style.display=(u.role==='admin'||u.role==='skladnik')?'block':'none';
+  document.getElementById('admin-naradia-btn').style.display=u.role==='admin'?'':'none';
+  document.getElementById('admin-stavby-btn').style.display=(u.role==='admin'||u.role==='skladnik')?'':'none';
+  document.getElementById('admin-users-btn').style.display=u.role==='admin'?'':'none';
+  document.getElementById('admin-logo-btn').style.display=u.role==='admin'?'':'none';
+  renderSidebar();
+  nav('sklad');
+}
+
+function doLogout(){
+  currentUser=null;
+  document.getElementById('app').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('l-pass').value='';
+  initLogin();
+}
+
+// ════════════════════════════════════════════════════════════════
+//  NAVIGATION
+// ════════════════════════════════════════════════════════════════
+function nav(page, stavbaId){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if(stavbaId){
+    currentStavbaId=stavbaId;
+    document.getElementById('page-stavba').classList.add('active');
+    document.querySelector(`[data-stavba="${stavbaId}"]`)?.classList.add('active');
+    renderStavbaPage();
+  } else {
+    const el=document.getElementById('page-'+page);
+    if(el) el.classList.add('active');
+    document.querySelector(`[data-nav="${page}"]`)?.classList.add('active');
+    if(page==='sklad'){ renderSklad(); updateFsInfoBar(); }
+    if(page==='pohyby') renderPohyby();
+    if(page==='naradia-mgmt'){ renderNaradiaMgmt(); applyNaradiaMgmtRole(); updateLsInfoBar(); }
+    if(page==='stavby-mgmt'){ renderStavbyMgmt(); applyStavbyMgmtRole(); }
+    if(page==='pouzivatelia'){ renderPouzivatelia(); applyUsersRole(); }
+  }
+}
+window.nav = nav;
+
+function renderSidebar(){
+  var allowedIds = [];
+  if(currentUser && currentUser.role !== 'admin' && currentUser.role !== 'skladnik'){
+    if(currentUser.stavbyIds && currentUser.stavbyIds.length){
+      allowedIds = currentUser.stavbyIds;
+    } else if(currentUser.stavbaId){
+      allowedIds = [currentUser.stavbaId];
+    }
+  }
+  const stavbyToShow = (currentUser?.role==='admin' || currentUser?.role==='skladnik')
+    ? stavbyArr()
+    : stavbyArr().filter(function(s){ return allowedIds.length===0 || allowedIds.indexOf(s.id)>=0; });
+
+  const filt=document.getElementById('filter-stavba-pohyby');
+  if(filt) filt.innerHTML='<option value="">Všetky stavby</option>'+
+    stavbyArr().map(s=>`<option value="${s.id}">${s.kod}</option>`).join('');
+
+  document.getElementById('sidebar-stavby').innerHTML=stavbyToShow.map(s=>{
+    const objs=objektyArr(s.id);
+    const total=naradiaArr().reduce(function(sum,n){ return sum+naStavbeCelkom(s.id,n.id); },0);
+    const dot=total>0?'#BA7517':'#1D9E75';
+    return `<button class="nav-item" data-stavba="${s.id}" onclick="nav('stavba','${s.id}')">
+      <span class="nav-dot" style="background:${dot}"></span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.kod}</span>
+      ${objs.length>0?`<span style="font-size:10px;color:var(--text3)">${objs.length}obj</span>`:''}
+      ${total>0?`<span style="font-size:11px;background:#F5EED8;color:#7A5018;padding:1px 6px;border-radius:99px">${total}</span>`:''}
+    </button>`;
+  }).join('');
+}
+
+// ── APLIKOVANIE ROLE NA UI PRVKY ─────────────────────────────
+function applyNaradiaMgmtRole(){
+  var actEl = document.getElementById('naradia-mgmt-actions');
+  var subEl = document.getElementById('naradia-mgmt-sub');
+  if(actEl) actEl.style.display = isAdmin() ? '' : 'none';
+  if(subEl) subEl.textContent = isAdmin() ? 'Pridávanie a úprava náradia' : 'Prehľad náradia (len čítanie)';
+  updateFsInfoBar();
+}
+function applyStavbyMgmtRole(){
+  var btn = document.getElementById('stavby-add-btn');
+  if(btn) btn.style.display = isAdmin() ? '' : 'none';
+}
+function applyUsersRole(){
+  var btn = document.getElementById('users-add-btn');
+  if(btn) btn.style.display = isAdmin() ? '' : 'none';
+}
+window.applyNaradiaMgmtRole = applyNaradiaMgmtRole;
+window.applyStavbyMgmtRole  = applyStavbyMgmtRole;
+window.applyUsersRole        = applyUsersRole;
+
+// ════════════════════════════════════════════════════════════════
+//  NÁRADIE SEARCH / AUTOCOMPLETE
+// ════════════════════════════════════════════════════════════════
+function initNaradieSearch(searchId, selectId, dropId, itemsFn, onSelect){
+  const input  = document.getElementById(searchId);
+  const select = document.getElementById(selectId);
+  const drop   = document.getElementById(dropId);
+  if(!input || !select || !drop) return;
+
+  function showDrop(query){
+    const q = query.toLowerCase().trim();
+    const items = itemsFn();
+    const filtered = q ? items.filter(i => i.label.toLowerCase().includes(q)) : items;
+
+    if(!filtered.length){
+      drop.innerHTML = '<div class="ns-item ns-empty">Nenašlo sa žiadne náradie</div>';
+      drop.style.display = 'block';
+      return;
+    }
+    drop.innerHTML = filtered.map(i =>
+      `<div class="ns-item" data-id="${i.id}">${highlight(i.label, q)}</div>`
+    ).join('');
+    drop.style.display = 'block';
+
+    drop.querySelectorAll('.ns-item[data-id]').forEach(el => {
+      el.addEventListener('mousedown', function(e){
+        e.preventDefault();
+        selectItem(this.dataset.id, items);
+      });
+    });
+  }
+
+  function selectItem(id, items){
+    select.value = id;
+    const found = items.find(i => i.id === id);
+    if(found) input.value = found.label;
+    drop.style.display = 'none';
+    if(onSelect) onSelect(id);
+  }
+
+  function highlight(text, q){
+    if(!q) return text;
+    const idx = text.toLowerCase().indexOf(q);
+    if(idx < 0) return text;
+    return text.slice(0,idx)
+      + '<strong style="color:var(--accent)">' + text.slice(idx, idx+q.length) + '</strong>'
+      + text.slice(idx+q.length);
+  }
+
+  input.addEventListener('input', function(){
+    showDrop(this.value);
+  });
+  input.addEventListener('focus', function(){
+    showDrop(this.value);
+  });
+  input.addEventListener('blur', function(){
+    setTimeout(() => { drop.style.display='none'; }, 150);
+  });
+  input.addEventListener('keydown', function(e){
+    const visible = drop.querySelectorAll('.ns-item[data-id]');
+    const active  = drop.querySelector('.ns-item.ns-active');
+    if(e.key === 'ArrowDown'){
+      e.preventDefault();
+      if(!visible.length) return;
+      if(!active){ visible[0].classList.add('ns-active'); visible[0].scrollIntoView({block:'nearest'}); }
+      else {
+        const idx = Array.from(visible).indexOf(active);
+        active.classList.remove('ns-active');
+        const next = visible[Math.min(idx+1, visible.length-1)];
+        next.classList.add('ns-active');
+        next.scrollIntoView({block:'nearest'});
+      }
+    } else if(e.key === 'ArrowUp'){
+      e.preventDefault();
+      if(!active) return;
+      const idx = Array.from(visible).indexOf(active);
+      active.classList.remove('ns-active');
+      const prev = visible[Math.max(idx-1,0)];
+      prev.classList.add('ns-active');
+      prev.scrollIntoView({block:'nearest'});
+    } else if(e.key === 'Enter'){
+      e.preventDefault();
+      if(active) { selectItem(active.dataset.id, itemsFn()); }
+    } else if(e.key === 'Escape'){
+      drop.style.display='none';
+    }
+  });
+}
+window.initNaradieSearch = initNaradieSearch;
+
+function syncSearchInput(searchId, selectId, itemsFn){
+  const input  = document.getElementById(searchId);
+  const select = document.getElementById(selectId);
+  if(!input || !select) return;
+  const items = itemsFn();
+  const found = items.find(i => i.id === select.value);
+  input.value = found ? found.label : '';
+}
+window.syncSearchInput = syncSearchInput;
+
+// ════════════════════════════════════════════════════════════════
+//  SKLAD
+// ════════════════════════════════════════════════════════════════
+function renderSklad(){
+  const naradia=naradiaArr();
+
+  const skupiny = [];
+  const skupMap = {};
+  naradia.forEach(function(n){
+    const key = n.name.toLowerCase().trim();
+    if(!skupMap[key]){
+      skupMap[key] = { name:n.name, kat:n.kat||'', items:[], totalAll:0, vSkladeAll:0, naStavbeAll:0 };
+      skupiny.push(skupMap[key]);
+    }
+    const vs = vSklade(n.id);
+    const ns = naStavbe(n.id);
+    skupMap[key].items.push(n);
+    skupMap[key].totalAll    += n.total||0;
+    skupMap[key].vSkladeAll  += vs;
+    skupMap[key].naStavbeAll += ns;
+  });
+
+  const volne   = skupiny.filter(g=>g.vSkladeAll>0).length;
+  const vydane  = skupiny.filter(g=>g.naStavbeAll>0).length;
+  const prazdne = skupiny.filter(g=>g.vSkladeAll===0).length;
+
+  document.getElementById('sklad-metrics').innerHTML=`
+    <div class="metric"><div class="metric-label">Celkom položiek</div><div class="metric-val">${skupiny.length}</div></div>
+    <div class="metric"><div class="metric-label">Dostupné</div><div class="metric-val green">${volne}</div></div>
+    <div class="metric"><div class="metric-label">Na stavbách</div><div class="metric-val amber">${vydane}</div></div>
+    <div class="metric"><div class="metric-label">Vydané</div><div class="metric-val red">${prazdne}</div></div>
+    <div class="metric"><div class="metric-label">Aktívne stavby</div><div class="metric-val blue">${stavbyArr().filter(s=>s.stav==='Aktívna').length}</div></div>`;
+
+  const tbody=document.querySelector('#sklad-table tbody');
+  tbody.innerHTML=skupiny.map(function(g,i){
+    const vs = g.vSkladeAll;
+    const ns = g.naStavbeAll;
+    const tt = g.totalAll;
+    const badge = vs===0?'badge-red':vs<tt?'badge-amber':'badge-green';
+    const stav  = vs===0?'Vydané':vs<tt?'Čiastočne':'Dostupné';
+    const varBadge = g.items.length>1
+      ? `<span style="font-size:10px;background:var(--info-light);color:var(--info-text);padding:1px 6px;border-radius:99px;margin-left:4px">${g.items.length} varianty</span>`
+      : '';
+    // Čísla kariet — ak 1 variant zobraz jeho číslo, ak viac zobraz všetky
+    const cislaBadges = g.items.length === 1
+      ? `<span style="display:inline-block;font-family:var(--mono);font-size:11px;font-weight:700;background:var(--accent-light);color:var(--accent-text);padding:2px 7px;border-radius:99px">${g.items[0].cislo||'—'}</span>`
+      : g.items.map(function(it){
+          return `<span style="display:inline-block;font-family:var(--mono);font-size:10px;font-weight:700;background:var(--accent-light);color:var(--accent-text);padding:1px 5px;border-radius:99px;margin-bottom:2px">${it.cislo||'—'}</span>`;
+        }).join('<br>');
+    return `<tr>
+      <td style="text-align:center;vertical-align:middle">${cislaBadges}</td>
+      <td><strong>${g.name}</strong>${varBadge}<br><span style="font-size:11px;color:var(--text3)">${g.kat}</span></td>
+      <td>${g.items[0].unit||'ks'}</td>
+      <td style="font-family:var(--mono)">${tt}</td>
+      <td style="font-family:var(--mono);font-weight:600;color:${vs===0?'var(--danger)':vs<tt?'var(--warn)':'var(--accent)'}">${vs}</td>
+      <td style="font-family:var(--mono)">${ns}</td>
+      <td><span class="badge ${badge}">${stav}</span></td>
+    </tr>`;
+  }).join('');
+
+  populateSkladSelects();
+  var formsEl = document.getElementById('sklad-forms-admin');
+  if(formsEl) formsEl.style.display = canEditSklad() ? 'grid' : 'none';
+}
+
+function populateSkladSelects(){
+  const vn=document.getElementById('sk-v-n');
+  const vs=document.getElementById('sk-v-s');
+  const rn=document.getElementById('sk-r-n');
+  if(!vn) return;
+  const naradia=naradiaArr();
+
+  vn.innerHTML=naradia.map(n=>{
+    const vs2=vSklade(n.id);
+    const label = '['+( n.cislo||'—')+'] '+ n.name
+      + (n.sn ? ' [SN: '+n.sn+']' : '')
+      + (n.model ? ' ('+n.model+')' : '')
+      + ' – sklad: '+vs2+' '+n.unit;
+    return `<option value="${n.id}">${label}</option>`;
+  }).join('');
+
+  rn.innerHTML=naradia.map(n=>`<option value="${n.id}">[${n.cislo||'—'}] ${n.name}${n.sn?' [SN: '+n.sn+']':''}</option>`).join('');
+
+  vs.innerHTML=stavbyArr().map(s=>`<option value="${s.id}">${s.kod} – ${s.name}</option>`).join('');
+
+  initNaradieSearch(
+    'sk-v-n-search', 'sk-v-n', 'sk-v-n-drop',
+    function(){
+      return naradiaArr().map(n=>({
+        id: n.id,
+        label: '['+( n.cislo||'—')+'] '+n.name
+          + (n.sn ? ' [SN: '+n.sn+']' : '')
+          + (n.model ? ' ('+n.model+')' : '')
+          + ' – sklad: '+vSklade(n.id)+' '+n.unit
+      }));
+    },
+    function(nId){ updateSkladImg('sk-v-img', nId); }
+  );
+
+  initNaradieSearch(
+    'sk-r-n-search', 'sk-r-n', 'sk-r-n-drop',
+    function(){
+      return naradiaArr().map(n=>({
+        id: n.id,
+        label: '['+( n.cislo||'—')+'] '+n.name+(n.sn?' [SN: '+n.sn+']':'')
+      }));
+    },
+    function(nId){ refreshReturnQty(); updateSkladImg('sk-r-img', nId); }
+  );
+
+  vn.onchange=function(){ updateSkladImg('sk-v-img', this.value); };
+  rn.onchange=function(){ refreshReturnQty(); updateSkladImg('sk-r-img', this.value); };
+  vs.onchange=function(){ refreshVydajObjekt(this.value); };
+  refreshReturnQty();
+  refreshVydajObjekt(vs.value);
+  updateSkladImg('sk-v-img', vn.value);
+  updateSkladImg('sk-r-img', rn.value);
+}
+
+// Naplní select objektov pri vydaji (sklad)
+function refreshVydajObjekt(sid){
+  const el = document.getElementById('sk-v-o-obj');
+  if(!el) return;
+  const stavba = S.stavby[sid];
+  const objs = stavba && stavba.objekty ? Object.values(stavba.objekty) : [];
+  if(objs.length === 0){
+    el.parentElement.style.display='none';
+    el.innerHTML='';
+  } else {
+    el.parentElement.style.display='';
+    el.innerHTML='<option value="">— Bez objektu —</option>'+
+      objs.map(o=>`<option value="${o.id}">${o.name}</option>`).join('');
+  }
+}
+window.refreshVydajObjekt = refreshVydajObjekt;
+
+function refreshReturnQty(){
+  const rn=document.getElementById('sk-r-n');
+  const rs=document.getElementById('sk-r-s');
+  const ro=document.getElementById('sk-r-o-obj');
+  const info=document.getElementById('sk-r-info');
+  if(!rn||!rs||!info) return;
+  const nId=rn.value;
+  const prevSid=rs.value;
+
+  // Nájdi stavby kde je náradie (cez objekty aj flat)
+  const stavbyMajuce = stavbyArr().filter(function(s){
+    return naStavbeCelkom(s.id, nId) > 0;
+  });
+  rs.innerHTML = stavbyMajuce.length
+    ? stavbyMajuce.map(s=>`<option value="${s.id}">${s.kod} – ${s.name} (${naStavbeCelkom(s.id,nId)} ks)</option>`).join('')
+    : '<option value="">— Žiadna stavba nemá toto náradie —</option>';
+  if(stavbyMajuce.find(s=>s.id===prevSid)) rs.value=prevSid;
+
+  const sid = rs.value;
+  const stavba = S.stavby[sid];
+  const objs = stavba && stavba.objekty ? Object.values(stavba.objekty) : [];
+
+  // Naplň select objektov pre vrátenie
+  if(ro){
+    if(sid && objs.length > 0){
+      const objsMajuce = objs.filter(o=>((S.site[sid]||{})[o.id]||{})[nId]>0);
+      ro.innerHTML = '<option value="">— Bez objektu —</option>'+
+        objsMajuce.map(o=>`<option value="${o.id}">${o.name} (${((S.site[sid]||{})[o.id]||{})[nId]||0} ks)</option>`).join('');
+      ro.parentElement.style.display = objs.length>0 ? '' : 'none';
+    } else {
+      ro.innerHTML='<option value="">— Bez objektu —</option>';
+      ro.parentElement.style.display='none';
+    }
+  }
+
+  const qty = sid ? naStavbeCelkom(sid, nId) : 0;
+  const n=S.naradia[nId];
+  info.textContent = stavbyMajuce.length===0
+    ? 'Toto náradie nie je momentálne na žiadnej stavbe'
+    : 'Na stavbe sa nachádza: '+qty+' '+(n?n.unit:'ks');
+  info.style.color = stavbyMajuce.length===0?'var(--text3)':'var(--accent)';
+}
+window.refreshReturnQty=refreshReturnQty;
+
+async function vydajZoSkladu(){
+  const nId=document.getElementById('sk-v-n').value;
+  const sid=document.getElementById('sk-v-s').value;
+  const oid=document.getElementById('sk-v-o-obj')?.value||'';
+  const qty=parseInt(document.getElementById('sk-v-q').value)||0;
+  const osoba=document.getElementById('sk-v-o').value.trim();
+  const pozn=document.getElementById('sk-v-p').value.trim();
+  if(!sid){toast('Vyberte stavbu','err');return;}
+  if(qty<=0){toast('Zadajte platné množstvo','err');return;}
+  if(vSklade(nId)<qty){toast('V sklade je len '+vSklade(nId)+' ks!','err');return;}
+  const n=S.naradia[nId];
+  const stavba=S.stavby[sid];
+  const objekt = oid && stavba?.objekty?.[oid] ? stavba.objekty[oid] : null;
+  try{
+    if(objekt){
+      const cur=((S.site[sid]||{})[oid]||{})[nId]||0;
+      await dbUpdate('site/'+sid+'/'+oid, {[nId]: cur+qty});
+    } else {
+      const cur=((S.site[sid]||{})[nId]||0);
+      await dbUpdate('site/'+sid, {[nId]: cur+qty});
+    }
+    await dbPush('pohyby', {typ:'vydaj',stavbaId:sid,objektId:oid||'',objektName:objekt?.name||'',
+      naradieId:nId,qty,osoba,poznamka:pozn,
+      cas:now(),ts:Date.now(),user:currentUser?.name||'',naradia:n?.name||'',stavba:stavba?.name||'',cislo:n?.cislo||''});
+    toast('Vydané: '+qty+' × '+n?.name+' → '+stavba?.kod+(objekt?' / '+objekt.name:''),'ok');
+    document.getElementById('sk-v-n-search').value='';
+    populateSkladSelects();
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.vydajZoSkladu=vydajZoSkladu;
+
+async function vratDoSkladu(){
+  const nId=document.getElementById('sk-r-n').value;
+  const sid=document.getElementById('sk-r-s').value;
+  const oid=document.getElementById('sk-r-o-obj')?.value||'';
+  const qty=parseInt(document.getElementById('sk-r-q').value)||0;
+  const stav=document.getElementById('sk-r-stav').value;
+  const pozn=document.getElementById('sk-r-p').value.trim();
+  if(!sid){toast('Vyberte stavbu','err');return;}
+  if(qty<=0){toast('Zadajte platné množstvo','err');return;}
+  const stavba=S.stavby[sid];
+  const objekt = oid && stavba?.objekty?.[oid] ? stavba.objekty[oid] : null;
+  let onSite;
+  if(objekt){
+    onSite=((S.site[sid]||{})[oid]||{})[nId]||0;
+  } else {
+    onSite=((S.site[sid]||{})[nId]||0);
+  }
+  if(onSite<qty){toast('Na stavbe je len '+onSite+' ks!','err');return;}
+  const n=S.naradia[nId];
+  try{
+    if(objekt){
+      await dbUpdate('site/'+sid+'/'+oid, {[nId]: onSite-qty});
+    } else {
+      await dbUpdate('site/'+sid, {[nId]: onSite-qty});
+    }
+    await dbPush('pohyby', {typ:'vratenie',stavbaId:sid,objektId:oid||'',objektName:objekt?.name||'',
+      naradieId:nId,qty,stav,poznamka:pozn,
+      cas:now(),ts:Date.now(),user:currentUser?.name||'',naradia:n?.name||'',stavba:stavba?.name||'',cislo:n?.cislo||''});
+    toast('Vrátené: '+qty+' × '+n?.name+' ← '+stavba?.kod+(objekt?' / '+objekt.name:''),'ok');
+    document.getElementById('sk-r-n-search').value='';
+    populateSkladSelects();
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.vratDoSkladu=vratDoSkladu;
+
+// ════════════════════════════════════════════════════════════════
+//  STAVBA DETAIL
+// ════════════════════════════════════════════════════════════════
+function renderStavbaPage(){
+  const stavba=S.stavby[currentStavbaId];
+  if(!stavba) return;
+  document.getElementById('stavba-page-title').textContent=stavba.name;
+  document.getElementById('stavba-page-sub').textContent=`${stavba.kod} · ${stavba.adresa||''} · ${stavba.stav}`;
+  const site=S.site[stavba.id]||{};
+  const naradia=naradiaArr();
+  const objs=objektyArr(stavba.id);
+  const totalOnSite=naradia.reduce((s,n)=>s+naStavbeCelkom(stavba.id,n.id),0);
+  const poloziek=naradia.filter(n=>naStavbeCelkom(stavba.id,n.id)>0).length;
+  const pohybyStavby=pohybyArr().filter(p=>p.stavbaId===stavba.id);
+
+  document.getElementById('stavba-alert').innerHTML=totalOnSite>0
+    ?`<div class="alert alert-warn">⚠ Na stavbe sa nachádza <strong>${totalOnSite} ks</strong> náradia (${poloziek} položiek)</div>`
+    :`<div class="alert alert-green">✔ Všetko náradie bolo vrátené do skladu</div>`;
+
+  document.getElementById('stavba-metrics').innerHTML=`
+    <div class="metric"><div class="metric-label">Na stavbe (ks)</div><div class="metric-val amber">${totalOnSite}</div></div>
+    <div class="metric"><div class="metric-label">Položiek</div><div class="metric-val">${poloziek}</div></div>
+    <div class="metric"><div class="metric-label">Objektov</div><div class="metric-val">${objs.length}</div></div>
+    <div class="metric"><div class="metric-label">Pohybov celkom</div><div class="metric-val blue">${pohybyStavby.length}</div></div>`;
+
+  const canEdit = canEditSklad();
+  const sid = stavba.id;
+
+  // Náradie na stavbe celkom (cez všetky objekty)
+  const naradieNaStavbe = naradia.filter(n=>naStavbeCelkom(sid,n.id)>0);
+
+  // Select pre objekty vo formulároch
+  const objOpts = objs.length>0
+    ? '<option value="">— Bez objektu —</option>'+objs.map(o=>`<option value="${o.id}">${o.name}</option>`).join('')
+    : '';
+  const objSelect = (objs.length>0)
+    ? `<div style="margin-bottom:8px"><label>Objekt stavby</label><select id="v-obj-${sid}">${objOpts}</select></div>`
+    : `<input type="hidden" id="v-obj-${sid}" value="">`;
+  const objSelectR = (objs.length>0)
+    ? `<div style="margin-bottom:8px"><label>Objekt stavby</label><select id="r-obj-${sid}" onchange="refreshStavbaReturnObjekt('${sid}',this.value)">${objOpts}</select></div>`
+    : `<input type="hidden" id="r-obj-${sid}" value="">`;
+
+  document.getElementById('stavba-forms').innerHTML=canEdit?`
+    <div class="card">
+      <div class="card-title">Vydať zo skladu</div>
+      <div style="margin-bottom:8px">
+        <label>Vyhľadať náradie</label>
+        <div class="ns-wrap">
+          <input type="text" id="v-n-search-${sid}" class="ns-input" placeholder="Zadajte názov náradia…" autocomplete="off">
+          <div class="ns-drop" id="v-n-drop-${sid}"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+          <div id="v-img-${sid}" style="display:none;flex-shrink:0"></div>
+          <div style="flex:1">
+            <label>Náradie</label>
+            <select id="v-n-${sid}" onchange="updateSkladImg('v-img-${sid}',this.value)">${naradia.map(n=>`<option value="${n.id}">[${n.cislo||'—'}] ${n.name} (sklad: ${vSklade(n.id)} ${n.unit})</option>`).join('')}</select>
+          </div>
+        </div>
+      </div>
+      ${objSelect}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div><label>Množstvo</label><input type="number" id="v-q-${sid}" min="1" value="1"></div>
+        <div><label>Zodpovedná osoba</label><input type="text" id="v-o-${sid}" placeholder="Meno" value="${currentUser?.name||''}"></div>
+      </div>
+      <div style="margin-bottom:10px"><label>Poznámka</label><input type="text" id="v-p-${sid}" placeholder="Voliteľná"></div>
+      <button class="btn btn-warn" style="width:100%;justify-content:center" onclick="vydaj('${sid}')">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg> Vydať zo skladu
+      </button>
+    </div>
+    <div class="card">
+      <div class="card-title">Vrátiť do skladu</div>
+      <div style="margin-bottom:8px">
+        <label>Vyhľadať náradie</label>
+        <div class="ns-wrap">
+          <input type="text" id="r-n-search-${sid}" class="ns-input" placeholder="Zadajte názov náradia…" autocomplete="off">
+          <div class="ns-drop" id="r-n-drop-${sid}"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+          <div id="r-img-${sid}" style="display:none;flex-shrink:0"></div>
+          <div style="flex:1">
+            <label>Náradie na stavbe</label>
+            <select id="r-n-${sid}" onchange="updateSkladImg('r-img-${sid}',this.value)">${
+              naradieNaStavbe.length
+                ? naradieNaStavbe.map(n=>`<option value="${n.id}">[${n.cislo||'—'}] ${n.name} (${naStavbeCelkom(sid,n.id)} ks)</option>`).join('')
+                : '<option value="">— Žiadne náradie na stavbe —</option>'
+            }</select>
+          </div>
+        </div>
+      </div>
+      ${objSelectR}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div><label>Množstvo</label><input type="number" id="r-q-${sid}" min="1" value="1"></div>
+        <div><label>Stav náradia</label>
+          <select id="r-s-${sid}"><option>Dobrý</option><option>Poškodený</option><option>Chýba</option><option>Skontrolovať</option></select>
+        </div>
+      </div>
+      <div style="margin-bottom:10px"><label>Poznámka</label><input type="text" id="r-p-${sid}" placeholder="Voliteľná"></div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="vrat('${sid}')" ${!naradieNaStavbe.length?'disabled':''}>
+        <svg class="icon" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg> Vrátiť do skladu
+      </button>
+    </div>`:
+    `<div class="alert alert-warn" style="grid-column:1/-1">Nemáte oprávnenie na výdaj/vrátenie pre túto stavbu.</div>`;
+
+  if(canEdit){
+    initNaradieSearch(`v-n-search-${sid}`,`v-n-${sid}`,`v-n-drop-${sid}`,
+      function(){ return naradiaArr().map(n=>({id:n.id,label:'['+( n.cislo||'—')+'] '+n.name+' (sklad: '+vSklade(n.id)+' '+n.unit+')'})); },
+      function(nId){ updateSkladImg('v-img-'+sid, nId); }
+    );
+    initNaradieSearch(`r-n-search-${sid}`,`r-n-${sid}`,`r-n-drop-${sid}`,
+      function(){ return naradieNaStavbe.map(n=>({id:n.id,label:'['+( n.cislo||'—')+'] '+n.name+' ('+naStavbeCelkom(sid,n.id)+' ks)'})); },
+      function(nId){ updateSkladImg('r-img-'+sid, nId); }
+    );
+    var vnEl=document.getElementById('v-n-'+sid);
+    var rnEl=document.getElementById('r-n-'+sid);
+    if(vnEl) updateSkladImg('v-img-'+sid, vnEl.value);
+    if(rnEl) updateSkladImg('r-img-'+sid, rnEl.value);
+  }
+
+  // ── Tabuľka náradia — zoskupená po objektoch ─────────────────
+  const tbody=document.querySelector('#stavba-table tbody');
+  if(naradieNaStavbe.length===0 && objs.length===0){
+    tbody.innerHTML='<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text3)">Žiadne náradie nie je evidované na tejto stavbe</td></tr>';
+    return;
+  }
+
+  let rows = '';
+
+  // Skupiny: každý objekt + "bez objektu"
+  const skupiny = [];
+  objs.forEach(function(o){ skupiny.push({id:o.id, name:o.name, isObj:true}); });
+  skupiny.push({id:'__flat__', name:'Bez objektu', isObj:false});
+
+  skupiny.forEach(function(sk){
+    let riadky = '';
+    naradia.forEach(function(n){
+      let qty;
+      if(sk.isObj){
+        qty = ((site[sk.id]||{})[n.id]||0);
+      } else {
+        // flat (stará štruktúra) — číslo priamo v site[stavbaId][nId]
+        qty = (typeof site[n.id]==='number') ? site[n.id] : 0;
+      }
+      if(qty===0) return;
+
+      const lastVydaj = pohybyArr().find(function(p){
+        return p.stavbaId===sid && p.naradieId===n.id && p.typ==='vydaj'
+          && (sk.isObj ? p.objektId===sk.id : !p.objektId);
+      });
+      const lastVrat = pohybyArr().find(function(p){
+        return p.stavbaId===sid && p.naradieId===n.id && p.typ==='vratenie'
+          && (sk.isObj ? p.objektId===sk.id : !p.objektId);
+      });
+      const vydajHtml = lastVydaj
+        ? '<div style="display:flex;align-items:baseline;gap:4px">'
+            +'<span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--warn);flex-shrink:0">+'+lastVydaj.qty+'</span>'
+            +(lastVydaj.osoba?'<span style="font-size:12px;font-weight:500">'+lastVydaj.osoba+'</span>':'')
+            +(lastVydaj.poznamka?'<span style="font-size:11px;color:var(--text3)"> · '+lastVydaj.poznamka+'</span>':'')
+          +'</div>'
+        : '<span style="color:var(--text3);font-size:11px">—</span>';
+      const vratHtml = lastVrat
+        ? '<div style="display:flex;align-items:baseline;gap:4px;margin-top:3px">'
+            +'<span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);flex-shrink:0">−'+lastVrat.qty+'</span>'
+            +(lastVrat.stav&&lastVrat.stav!=='Dobrý'?'<span style="font-size:11px;color:var(--danger)">'+lastVrat.stav+'</span>':'')
+            +(lastVrat.poznamka?'<span style="font-size:11px;color:var(--text3)"> · '+lastVrat.poznamka+'</span>':'')
+          +'</div>'
+        : '';
+
+      riadky += `<tr class="on-site">
+        <td style="font-family:var(--mono);font-size:11px;font-weight:600;text-align:center;vertical-align:top;padding-top:10px"><span style="display:inline-block;min-width:28px;padding:2px 6px;background:var(--accent-light);color:var(--accent-text);border-radius:99px">${n.cislo||'—'}</span></td>
+        <td style="vertical-align:top"><strong>${n.name}</strong></td>
+        <td style="vertical-align:top">${n.unit}</td>
+        <td style="font-family:var(--mono);font-weight:600;color:var(--warn);vertical-align:top;padding-top:10px">${qty}</td>
+        <td style="vertical-align:top;max-width:260px">${vydajHtml}${vratHtml}</td>
+        <td style="vertical-align:top;padding-top:10px"><span class="badge badge-amber">Na stavbe</span></td>
+      </tr>`;
+    });
+
+    if(riadky){
+      rows += `<tr style="background:var(--surface2)"><td colspan="6" style="padding:5px 10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">
+        ${sk.isObj ? '🏗 '+sk.name : '📦 Bez objektu'}
+      </td></tr>`;
+      rows += riadky;
+    }
+  });
+
+  tbody.innerHTML = rows || '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text3)">Žiadne náradie nie je evidované na tejto stavbe</td></tr>';
+}
+
+// Pomocná pre vrátenie — refresh qty pri zmene objektu
+function refreshStavbaReturnObjekt(sid, oid){ /* placeholder */ }
+window.refreshStavbaReturnObjekt = refreshStavbaReturnObjekt;
+
+async function vydaj(sid){
+  const nId=document.getElementById(`v-n-${sid}`).value;
+  const oid=(document.getElementById(`v-obj-${sid}`)?.value)||'';
+  const qty=parseInt(document.getElementById(`v-q-${sid}`).value)||0;
+  const osoba=document.getElementById(`v-o-${sid}`).value.trim();
+  const pozn=document.getElementById(`v-p-${sid}`).value.trim();
+  if(qty<=0){toast('Zadajte platné množstvo','err');return;}
+  if(vSklade(nId)<qty){toast('V sklade je len '+vSklade(nId)+' ks!','err');return;}
+  const n=S.naradia[nId];
+  const stavba=S.stavby[sid];
+  const objekt = oid && stavba?.objekty?.[oid] ? stavba.objekty[oid] : null;
+  try{
+    if(objekt){
+      const cur=((S.site[sid]||{})[oid]||{})[nId]||0;
+      await dbUpdate('site/'+sid+'/'+oid,{[nId]:cur+qty});
+    } else {
+      const cur=((S.site[sid]||{})[nId]||0);
+      await dbUpdate('site/'+sid,{[nId]:cur+qty});
+    }
+    await dbPush('pohyby',{typ:'vydaj',stavbaId:sid,objektId:oid||'',objektName:objekt?.name||'',
+      naradieId:nId,qty,osoba,poznamka:pozn,
+      cas:now(),ts:Date.now(),user:currentUser?.name||'',naradia:n?.name||'',stavba:stavba?.name||'',cislo:n?.cislo||''});
+    toast('Vydané: '+qty+' × '+n?.name+(objekt?' → '+objekt.name:''),'ok');
+    const si=document.getElementById(`v-n-search-${sid}`);
+    if(si) si.value='';
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.vydaj=vydaj;
+
+async function vrat(sid){
+  const nId=document.getElementById(`r-n-${sid}`).value;
+  const oid=(document.getElementById(`r-obj-${sid}`)?.value)||'';
+  const qty=parseInt(document.getElementById(`r-q-${sid}`).value)||0;
+  const stav=document.getElementById(`r-s-${sid}`).value;
+  const pozn=document.getElementById(`r-p-${sid}`).value.trim();
+  if(!nId||nId===''){toast('Žiadne náradie na vrátenie','err');return;}
+  if(qty<=0){toast('Zadajte platné množstvo','err');return;}
+  const stavba=S.stavby[sid];
+  const objekt = oid && stavba?.objekty?.[oid] ? stavba.objekty[oid] : null;
+  let onSite;
+  if(objekt){
+    onSite=((S.site[sid]||{})[oid]||{})[nId]||0;
+  } else {
+    onSite=((S.site[sid]||{})[nId]||0);
+  }
+  if(onSite<qty){toast('Na stavbe je len '+onSite+' ks!','err');return;}
+  const n=S.naradia[nId];
+  try{
+    if(objekt){
+      await dbUpdate('site/'+sid+'/'+oid,{[nId]:onSite-qty});
+    } else {
+      await dbUpdate('site/'+sid,{[nId]:onSite-qty});
+    }
+    await dbPush('pohyby',{typ:'vratenie',stavbaId:sid,objektId:oid||'',objektName:objekt?.name||'',
+      naradieId:nId,qty,stav,poznamka:pozn,
+      cas:now(),ts:Date.now(),user:currentUser?.name||'',naradia:n?.name||'',stavba:stavba?.name||'',cislo:n?.cislo||''});
+    toast('Vrátené: '+qty+' × '+n?.name+(objekt?' ← '+objekt.name:''),'ok');
+    const si=document.getElementById(`r-n-search-${sid}`);
+    if(si) si.value='';
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.vrat=vrat;
+
+// ════════════════════════════════════════════════════════════════
+//  POHYBY
+// ════════════════════════════════════════════════════════════════
+// Vráti badge s číslom náradia pre pohyb (z pohybu alebo z aktuálnych dát)
+function getPohybCisloBadge(p){
+  const cislo = p.cislo || (p.naradieId && S.naradia[p.naradieId] ? S.naradia[p.naradieId].cislo : null);
+  if(!cislo) return '';
+  return `<span style="display:inline-block;font-family:var(--mono);font-size:10px;font-weight:700;background:var(--accent-light);color:var(--accent-text);padding:1px 6px;border-radius:99px;margin-right:5px;vertical-align:middle">#${cislo}</span>`;
+}
+
+// Vráti číslo náradia pre pohyb (pre export)
+function getPohybCislo(p){
+  return p.cislo || (p.naradieId && S.naradia[p.naradieId] ? S.naradia[p.naradieId].cislo : '') || '';
+}
+
+function renderPohyby(){
+  var elS=document.getElementById('filter-stavba-pohyby');
+  var elT=document.getElementById('filter-typ-pohyby');
+  var elOd=document.getElementById('filter-datum-od');
+  var elDo=document.getElementById('filter-datum-do');
+  var fS=elS?elS.value:'';
+  var fT=elT?elT.value:'';
+  var fOd=elOd?elOd.value:'';
+  var fDo=elDo?elDo.value:'';
+  let data=pohybyArr();
+  if(fS) data=data.filter(p=>p.stavbaId===fS);
+  if(fT) data=data.filter(p=>p.typ===fT);
+  if(fOd) data=data.filter(function(p){
+    if(p.ts) return p.ts >= new Date(fOd).getTime();
+    return true;
+  });
+  if(fDo) data=data.filter(function(p){
+    if(p.ts) return p.ts <= new Date(fDo+'T23:59:59').getTime();
+    return true;
+  });
+  var filterInfo='';
+  if(fOd||fDo) filterInfo='Obdobie: '+(fOd?formatDate(fOd):'začiatok')+' – '+(fDo?formatDate(fDo):'dnes')+' ('+data.length+' záznamov)';
+  var infoEl=document.getElementById('pohyby-filter-info');
+  if(infoEl) infoEl.textContent=filterInfo;
+  const el=document.getElementById('pohyby-list');
+  if(!data.length){
+    el.innerHTML='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><p>Žiadne pohyby</p></div>';
+    return;
+  }
+  el.innerHTML=data.map(p=>{
+    // ── Vizuál podľa typu pohybu ──────────────────────────────
+    var iconBg, iconSvg, qtyColor, qtyPrefix, qtyVal, subLine;
+    if(p.typ==='vydaj'){
+      iconBg  = 'pohyb-vydaj';
+      iconSvg = `<svg class="icon" viewBox="0 0 24 24" style="color:var(--warn)"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>`;
+      qtyColor  = 'var(--warn)';
+      qtyPrefix = '+';
+      qtyVal    = p.qty+' ks';
+      subLine   = (p.stavba||p.stavbaId||'') + (p.objektName?' / '+p.objektName:'') + (p.osoba?' · '+p.osoba:'') + (p.poznamka?' · '+p.poznamka:'') + (p.user?' · '+p.user:'');
+    } else if(p.typ==='vratenie'){
+      iconBg  = 'pohyb-vrat';
+      iconSvg = `<svg class="icon" viewBox="0 0 24 24" style="color:var(--accent)"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>`;
+      qtyColor  = 'var(--accent)';
+      qtyPrefix = '-';
+      qtyVal    = p.qty+' ks';
+      subLine   = (p.stavba||p.stavbaId||'') + (p.objektName?' / '+p.objektName:'') + (p.stav?' · '+p.stav:'') + (p.poznamka?' · '+p.poznamka:'') + (p.user?' · '+p.user:'');
+    } else if(p.typ==='pridanie'){
+      iconBg  = 'pohyb-pridanie';
+      iconSvg = `<svg class="icon" viewBox="0 0 24 24" style="color:var(--info)"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+      qtyColor  = 'var(--info)';
+      qtyPrefix = '+';
+      qtyVal    = p.qty+' ks';
+      subLine   = 'Pridané do skladu' + (p.kat?' · '+p.kat:'') + (p.poznamka?' · '+p.poznamka:'') + (p.user?' · '+p.user:'');
+    } else if(p.typ==='uprava'){
+      iconBg  = 'pohyb-uprava';
+      iconSvg = `<svg class="icon" viewBox="0 0 24 24" style="color:var(--text2)"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+      qtyColor  = 'var(--text2)';
+      qtyPrefix = '';
+      qtyVal    = p.totalNove+' ks';
+      subLine   = 'Upravené · bolo: '+(p.totalStare||0)+' ks → '+p.totalNove+' ks' + (p.poznamka?' · '+p.poznamka:'') + (p.user?' · '+p.user:'');
+    } else if(p.typ==='vymazanie'){
+      iconBg  = 'pohyb-vymazanie';
+      iconSvg = `<svg class="icon" viewBox="0 0 24 24" style="color:var(--danger)"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
+      qtyColor  = 'var(--danger)';
+      qtyPrefix = '-';
+      qtyVal    = p.qty+' ks';
+      subLine   = 'Vymazané z evidencie' + (p.poznamka?' · '+p.poznamka:'') + (p.user?' · '+p.user:'');
+    } else if(p.typ==='navysenie'){
+      iconBg  = 'pohyb-pridanie';
+      iconSvg = `<svg class="icon" viewBox="0 0 24 24" style="color:var(--info)"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+      qtyColor  = 'var(--info)';
+      qtyPrefix = '+';
+      qtyVal    = p.qty+' ks';
+      subLine   = 'Navýšenie počtu · bolo: '+(p.totalStare||0)+' ks → '+p.totalNove+' ks' + (p.user?' · '+p.user:'');
+    } else {
+      iconBg  = 'pohyb-vrat';
+      iconSvg = `<svg class="icon" viewBox="0 0 24 24" style="color:var(--text3)"><circle cx="12" cy="12" r="10"/></svg>`;
+      qtyColor  = 'var(--text3)';
+      qtyPrefix = '';
+      qtyVal    = (p.qty||0)+' ks';
+      subLine   = p.user||'';
+    }
+    return `
+    <div class="pohyb-row">
+      <div class="pohyb-icon ${iconBg}">${iconSvg}</div>
+      <div class="pohyb-info">
+        <div class="pohyb-main">
+          ${getPohybCisloBadge(p)}<span>${p.naradia||'—'}</span>
+        </div>
+        <div class="pohyb-sub">${subLine}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="pohyb-qty" style="color:${qtyColor}">${qtyPrefix}${qtyVal}</div>
+        <div class="pohyb-time">${p.cas}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+window.renderPohyby=renderPohyby;
+
+// ════════════════════════════════════════════════════════════════
+//  NARADIA MGMT
+// ════════════════════════════════════════════════════════════════
+
+function filterNaradiaMgmt(){
+  const q = (document.getElementById('naradia-mgmt-search')?.value || '').toLowerCase().trim();
+  const clearBtn = document.getElementById('naradia-mgmt-search-clear');
+  const countEl  = document.getElementById('naradia-mgmt-search-count');
+  if(clearBtn) clearBtn.style.display = q ? '' : 'none';
+  renderNaradiaMgmtRows(q, countEl);
+}
+window.filterNaradiaMgmt = filterNaradiaMgmt;
+
+function renderNaradiaMgmt(){
+  const q        = (document.getElementById('naradia-mgmt-search')?.value || '').toLowerCase().trim();
+  const countEl  = document.getElementById('naradia-mgmt-search-count');
+  const clearBtn = document.getElementById('naradia-mgmt-search-clear');
+  if(clearBtn) clearBtn.style.display = q ? '' : 'none';
+  renderNaradiaMgmtRows(q, countEl);
+}
+
+function renderNaradiaMgmtRows(q, countEl){
+  const isAdm  = isAdmin();
+  const all    = naradiaArr();
+  const filtered = q ? all.filter(function(n){
+    return (n.name||'').toLowerCase().includes(q)
+        || String(n.cislo||'').includes(q)
+        || (n.model||'').toLowerCase().includes(q)
+        || (n.sn||'').toLowerCase().includes(q)
+        || (n.kat||'').toLowerCase().includes(q)
+        || (n.pozn||'').toLowerCase().includes(q);
+  }) : all;
+
+  if(countEl) countEl.textContent = q
+    ? 'Nájdených: ' + filtered.length + ' z ' + all.length
+    : all.length + ' položiek';
+
+  function hl(text, q){
+    if(!q || !text) return text||'';
+    const s = String(text);
+    const idx = s.toLowerCase().indexOf(q);
+    if(idx < 0) return s;
+    return s.slice(0,idx)
+      + '<mark style="background:#FFF3CD;border-radius:2px;padding:0 1px">'
+      + s.slice(idx, idx+q.length) + '</mark>'
+      + s.slice(idx+q.length);
+  }
+
+  const tbody = document.querySelector('#naradia-mgmt-table tbody');
+  if(!filtered.length){
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--text3)">Žiadne náradie nevyhovuje hľadaniu „'+q+'"</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(function(n){
+    const img = getNaradiaImg(n.id);
+    const imgThumb = img
+      ? `<img src="${img}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;flex-shrink:0" onclick="openNaradiaDetail('${n.id}')" title="Zobraziť detail">`
+      : `<div onclick="openNaradiaDetail('${n.id}')" title="Zobraziť detail / pridať foto" style="width:36px;height:36px;border-radius:6px;border:1.5px dashed var(--border2);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text3);flex-shrink:0"><svg style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
+    return '<tr>'
+      +'<td style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent-text);text-align:center">'
+      +'<span style="display:inline-block;min-width:28px;padding:2px 6px;background:var(--accent-light);border-radius:99px;font-size:11px">'+hl(n.cislo||'—',q)+'</span>'
+      +'</td>'
+      +'<td><div style="display:flex;align-items:center;gap:8px">'+imgThumb
+      +'<div><strong style="cursor:pointer;color:var(--accent-text)" onclick="openNaradiaDetail(\''+n.id+'\')" onmouseenter="showImgPreview(\''+n.id+'\',this)" onmouseleave="hideImgPreview()">'+hl(n.name,q)+'</strong>'
+      +'<br><span style="font-size:11px;color:var(--text3)">'+hl(n.kat||'',q)+'</span>'
+      +(n.pozn?'<br><span style="font-size:11px;color:var(--text3);font-style:italic">'+hl(n.pozn,q)+'</span>':'')
+      +'</div></div></td>'
+      +'<td>'+(q&&n.model ? hl(n.model,q) : (n.model||'<span style="color:var(--text3)">—</span>'))+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px">'+(q&&n.sn ? hl(n.sn,q) : (n.sn||'<span style="color:var(--text3)">—</span>'))+'</td>'
+      +'<td>'+n.unit+'</td>'
+      +'<td style="font-family:var(--mono)">'+n.total+'</td>'
+      +'<td style="font-family:var(--mono)">'+naStavbe(n.id)+'</td>'
+      +'<td><div style="display:flex;gap:6px">'
+      +'<button class="btn btn-sm" onclick="openNaradiaDetail(\''+n.id+'\')">🔍 Detail</button>'
+      +(isAdm ? '<button class="btn btn-sm" onclick="editNaradia(\''+(n.id)+'\')">✏ Upraviť</button>' : '')
+      +(isAdm ? '<button class="btn btn-sm btn-danger" onclick="confirmDelete(\'naradia\',\''+(n.id)+'\',\''+(n.name.replace(/'/g,''))+'\')">🗑</button>' : '')
+      +(!isAdm ? '<span style="font-size:11px;color:var(--text3)">—</span>' : '')
+      +'</div></td></tr>';
+  }).join('');
+}
+
+// ── DETAIL NÁRADIA (slide-in panel) ─────────────────────────
+function openNaradiaDetail(id){
+  const n = S.naradia[id];
+  if(!n) return;
+  const img   = getNaradiaImg(id);
+  const vs    = vSklade(id);
+  const ns    = naStavbe(id);
+  const isAdm = isAdmin();
+
+  // Pohyby pre toto náradie
+  const pohybyN = pohybyArr().filter(p=>p.naradieId===id||p.naradia===n.name).slice(0,12);
+
+  // Stavby kde je náradie
+  const stavbyS = stavbyArr().filter(s=>((S.site[s.id]||{})[id]||0)>0);
+
+  document.getElementById('naradia-detail-body').innerHTML = `
+
+    <!-- ── Horný blok: obrázok + info vedľa seba ── -->
+    <div style="display:flex;gap:14px;margin-bottom:1.1rem;align-items:flex-start">
+
+      <!-- Obrázok -->
+      <div style="flex-shrink:0">
+        <div id="nd-img-wrap" style="border-radius:var(--radius);border:1.5px dashed var(--border2);overflow:hidden;display:inline-flex;align-items:center;justify-content:center;background:var(--surface2);position:relative;cursor:pointer;min-width:70px;min-height:70px;max-width:160px" onclick="document.getElementById('nd-img-input').click()">
+          ${img
+            ? `<img id="nd-img" src="${img}" style="display:block;max-width:160px;max-height:160px;width:auto;height:auto;object-fit:contain">`
+            : `<div style="width:100px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);font-size:11px;padding:8px;text-align:center">
+                <svg style="width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.5;margin-bottom:4px" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                Pridať foto
+               </div>`}
+          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.45);color:#fff;font-size:10px;text-align:center;padding:3px 0;opacity:0;transition:opacity .15s" id="nd-img-overlay">📷 Zmeniť</div>
+        </div>
+        <input type="file" id="nd-img-input" accept="image/*" style="display:none" onchange="handleNaradiaImgUpload('${id}',this)">
+        ${img && isAdm ? `<button class="btn btn-sm btn-danger" style="width:100%;margin-top:4px;justify-content:center;font-size:10px;padding:3px 8px" onclick="removeNaradiaImgAndRefresh('${id}')">🗑 Odstrániť</button>` : ''}
+      </div>
+
+      <!-- Info: názov + metriky + tlačidlá -->
+      <div style="flex:1;min-width:0">
+        <!-- Číslo + názov -->
+        <div style="font-size:16px;font-weight:600;margin-bottom:3px;line-height:1.3">
+          <span style="font-size:11px;font-family:var(--mono);background:var(--accent-light);color:var(--accent-text);padding:1px 7px;border-radius:99px;margin-right:5px;font-weight:600;vertical-align:middle">#${n.cislo||'—'}</span>${n.name}
+        </div>
+        <!-- Kat · Model · SN -->
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">${n.kat||''}${n.model?' · '+n.model:''}${n.sn?' · SN: '+n.sn:''}</div>
+
+        <!-- Kompaktné metriky vedľa seba -->
+        <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 10px;text-align:center;min-width:54px">
+            <div style="font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:1px">Celkom</div>
+            <div style="font-size:15px;font-weight:700;font-family:var(--mono);color:var(--text)">${n.total}</div>
+          </div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 10px;text-align:center;min-width:54px">
+            <div style="font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:1px">V sklade</div>
+            <div style="font-size:15px;font-weight:700;font-family:var(--mono);color:${vs>0?'var(--accent)':'var(--danger)'}">${vs}</div>
+          </div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 10px;text-align:center;min-width:54px">
+            <div style="font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:1px">Na stavbách</div>
+            <div style="font-size:15px;font-weight:700;font-family:var(--mono);color:${ns>0?'var(--warn)':'var(--text3)'}">${ns}</div>
+          </div>
+        </div>
+
+        ${n.pozn?`<div style="font-size:12px;color:var(--text2);background:var(--surface2);padding:5px 9px;border-radius:var(--radius-sm);margin-bottom:7px">📝 ${n.pozn}</div>`:''}
+
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${isAdm?`<button class="btn btn-sm btn-primary" onclick="closeNaradiaDetail();editNaradia('${id}')">✏ Upraviť</button>`:''}
+          ${isAdm?`<button class="btn btn-sm btn-danger" onclick="closeNaradiaDetail();confirmDelete('naradia','${id}','${n.name.replace(/'/g,'')}')">🗑 Vymazať</button>`:''}
+        </div>
+      </div>
+    </div>
+
+    <!-- Stavby kde je náradie -->
+    ${stavbyS.length?`
+    <div style="margin-bottom:1rem">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:8px">Evidované na stavbách</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${stavbyS.map(s=>`<span class="badge badge-amber" style="font-size:12px;padding:5px 12px">${s.kod} – ${(S.site[s.id]||{})[id]} ks</span>`).join('')}
+      </div>
+    </div>`:''}
+
+    <!-- Denník náradia -->
+    <div style="margin-top:1rem">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:8px">
+        📋 Denník náradia
+      </div>
+      ${(isAdm || (currentUser && currentUser.role==='skladnik')) ? `
+        <textarea id="nd-dennik-text" rows="7"
+          placeholder="Zapisujte sem históriu náradia, napr.:&#10;12.5.2024 – Nákup, dodávateľ Bosch SK, cena 320 €&#10;3.9.2024 – Oprava motora, servis Makita BA&#10;15.1.2025 – Ročná revízia v poriadku&#10;2.3.2025 – Výmena uhlíkov"
+          style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-family:var(--font);font-size:13px;resize:vertical;line-height:1.6;min-height:120px">${(n.dennik||'').replace(/</g,'&lt;')}</textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:6px">
+          <button class="btn btn-primary btn-sm" onclick="saveDennik('${id}')">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Uložiť denník
+          </button>
+        </div>` : `
+        <div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:${n.dennik?'var(--text)':'var(--text3)'};background:var(--surface2);padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);min-height:60px">
+          ${n.dennik ? n.dennik.replace(/</g,'&lt;') : 'Žiadne záznamy v denníku.'}
+        </div>`}
+    </div>
+
+    <!-- Posledné pohyby -->
+    <div style="margin-top:1rem">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:8px">Posledné pohyby</div>
+      ${pohybyN.length===0
+        ? `<div style="font-size:13px;color:var(--text3);padding:12px 0">Žiadne pohyby pre toto náradie</div>`
+        : pohybyN.map(p=>{
+            const typLabel = p.typ==='vydaj'?'Výdaj →':p.typ==='vratenie'?'← Vrátenie':p.typ==='pridanie'?'+ Pridanie':p.typ==='uprava'?'✏ Úprava':p.typ==='navysenie'?'+ Navýšenie':'🗑 Vymazanie';
+            const typColor = p.typ==='vydaj'?'var(--warn)':p.typ==='vratenie'?'var(--accent)':p.typ==='pridanie'||p.typ==='navysenie'?'var(--info)':p.typ==='uprava'?'var(--text2)':'var(--danger)';
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+              <div>
+                <span style="color:${typColor};font-weight:600">${typLabel}</span>
+                <span style="color:var(--text3);margin-left:8px">${p.stavba||''}</span>
+                ${p.osoba?`<span style="color:var(--text3)"> · ${p.osoba}</span>`:''}
+              </div>
+              <div style="text-align:right;flex-shrink:0;margin-left:8px">
+                <div style="font-family:var(--mono);font-weight:600;color:${typColor}">${p.qty||p.totalNove||0} ks</div>
+                <div style="color:var(--text3)">${p.cas}</div>
+              </div>
+            </div>`;
+          }).join('')
+      }
+    </div>
+  `;
+
+  // Hover overlay na obrázku
+  var wrap = document.getElementById('nd-img-wrap');
+  var ov   = document.getElementById('nd-img-overlay');
+  if(wrap && ov){
+    wrap.addEventListener('mouseenter',function(){ ov.style.opacity='1'; });
+    wrap.addEventListener('mouseleave',function(){ ov.style.opacity='0'; });
+  }
+
+  document.getElementById('naradia-detail-title').textContent = n.name;
+  document.getElementById('naradia-detail-panel').classList.add('open');
+  document.getElementById('naradia-detail-overlay').style.display='block';
+}
+window.openNaradiaDetail = openNaradiaDetail;
+
+// Uloží denník priamo do Firebase bez zatvárania panelu
+async function saveDennik(id){
+  const el = document.getElementById('nd-dennik-text');
+  if(!el) return;
+  const text = el.value.trim();
+  const n = S.naradia[id];
+  if(!n) return;
+  try{
+    await dbUpdate('naradia/'+id, { dennik: text });
+    S.naradia[id] = Object.assign({}, n, { dennik: text });
+    toast('Denník uložený','ok');
+    // Aktualizuj nadpis panelu ak sa zmenil
+    document.getElementById('naradia-detail-title').textContent = n.name;
+  }catch(e){ toast('Chyba: '+e.message,'err'); }
+}
+window.saveDennik = saveDennik;
+
+function closeNaradiaDetail(){
+  document.getElementById('naradia-detail-panel').classList.remove('open');
+  document.getElementById('naradia-detail-overlay').style.display='none';
+}
+window.closeNaradiaDetail = closeNaradiaDetail;
+
+function handleNaradiaImgUpload(id, input){
+  input.value='';
+  toast('V režime priečinka pridajte súbor priamo do priečinka a kliknite 🔄 Obnoviť','');
+}
+window.handleNaradiaImgUpload = handleNaradiaImgUpload;
+
+function removeNaradiaImgAndRefresh(id){
+  removeNaradiaImg(id);
+  toast('Fotografia odstránená','ok');
+  openNaradiaDetail(id);
+  renderNaradiaMgmt();
+  refreshSkladImgPreviews();
+}
+window.removeNaradiaImgAndRefresh = removeNaradiaImgAndRefresh;
+
+// ════════════════════════════════════════════════════════════════
+//  HROMADNÝ IMPORT FOTOGRAFIÍ  –  v FS režime len info
+// ════════════════════════════════════════════════════════════════
+function handleBulkImgImport(event){
+  event.target.value = '';
+  toast('V režime priečinka: skopírujte fotografie do nastaveného priečinka a kliknite 🔄 Obnoviť','');
+}
+window.handleBulkImgImport = handleBulkImgImport;
+
+function showBulkImgResult(results){ /* no-op v FS režime */ }
+window.showBulkImgResult = showBulkImgResult;
+function refreshSkladImgPreviews(){
+  var vId = document.getElementById('sk-v-n')?.value;
+  var rId = document.getElementById('sk-r-n')?.value;
+  if(vId) updateSkladImg('sk-v-img', vId);
+  if(rId) updateSkladImg('sk-r-img', rId);
+}
+window.refreshSkladImgPreviews = refreshSkladImgPreviews;
+
+function updateSkladImg(elId, nId){
+  var el = document.getElementById(elId);
+  if(!el) return;
+  var src = nId ? getNaradiaImg(nId) : '';
+  if(src){
+    el.innerHTML = `<img src="${src}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="openNaradiaDetail('${nId}')" title="Kliknite pre detail">`;
+    el.style.display='block';
+  } else {
+    el.style.display='none';
+  }
+}
+window.updateSkladImg = updateSkladImg;
+
+// ── FOTO V MODALI PRIDAŤ/UPRAVIŤ NÁRADIE ────────────────────
+let _modalImgPending = null;   // { action:'set'|'remove', dataUrl }
+
+function handleModalImgUpload(input){
+  input.value='';
+  toast('V režime priečinka pridajte súbor priamo do priečinka a kliknite 🔄 Obnoviť','');
+}
+window.handleModalImgUpload = handleModalImgUpload;
+
+function removeModalImg(){
+  _modalImgPending = { action:'remove', dataUrl:'' };
+  var prev = document.getElementById('n-img-preview');
+  if(prev) prev.innerHTML = `<svg style="width:22px;height:22px;stroke:var(--text3);fill:none;stroke-width:1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+  var rb = document.getElementById('n-img-remove-btn');
+  if(rb) rb.style.display='none';
+}
+window.removeModalImg = removeModalImg;
+
+function refreshModalImgPreview(id){
+  _modalImgPending = null;
+  var prev = document.getElementById('n-img-preview');
+  var rb   = document.getElementById('n-img-remove-btn');
+  if(!prev) return;
+  var src = id ? getNaradiaImg(id) : '';
+  if(src){
+    prev.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:cover">`;
+    if(rb) rb.style.display='';
+  } else {
+    prev.innerHTML = `<svg style="width:22px;height:22px;stroke:var(--text3);fill:none;stroke-width:1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+    if(rb) rb.style.display='none';
+  }
+}
+
+function editNaradia(id){
+  const n=S.naradia[id];
+  document.getElementById('edit-naradia-id').value=id;
+  document.getElementById('n-name').value=n.name||'';
+  document.getElementById('n-model').value=n.model||'';
+  document.getElementById('n-sn').value=n.sn||'';
+  document.getElementById('n-unit').value=n.unit||'ks';
+  document.getElementById('n-total').value=n.total||0;
+  document.getElementById('n-kat').value=n.kat||'Iné';
+  document.getElementById('n-pozn').value=n.pozn||'';
+  document.getElementById('n-dennik').value=n.dennik||'';
+  openModal('modal-add-naradia');
+  setTimeout(function(){ refreshModalImgPreview(id); }, 30);
+}
+window.editNaradia=editNaradia;
+
+async function saveNaradia(){
+  const id=document.getElementById('edit-naradia-id').value;
+  const name=document.getElementById('n-name').value.trim();
+  const model=document.getElementById('n-model').value.trim();
+  const sn=document.getElementById('n-sn').value.trim();
+  const unit=document.getElementById('n-unit').value;
+  const total=parseInt(document.getElementById('n-total').value)||0;
+  const kat=document.getElementById('n-kat').value;
+  const pozn=document.getElementById('n-pozn').value.trim();
+  const dennik=document.getElementById('n-dennik').value.trim();
+  if(!name){toast('Zadajte názov náradia','err');return;}
+
+  if(!id){
+    const matches = naradiaArr().filter(n => n.name.toLowerCase() === name.toLowerCase());
+    if(matches.length > 0){
+      openNaradieMatchModal(matches, {name,model,sn,unit,total,kat,pozn,dennik});
+      return;
+    }
+  }
+
+  await doSaveNaradia(id, {name,model,sn,unit,total,kat,pozn,dennik});
+}
+window.saveNaradia=saveNaradia;
+
+async function doSaveNaradia(id, obj){
+  const key = id || (Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,5));
+  const isNew = !id;
+  const old = S.naradia[key];
+  obj.id = key;
+  // Nové náradie dostane nasledujúce číslo; existujúce si zachová svoje
+  if(isNew){
+    obj.cislo = getNextNaradieCislo();
+  } else if(old && old.cislo){
+    obj.cislo = old.cislo;
+  }
+  try{
+    await dbSet('naradia/'+key, obj);
+    S.naradia[key] = obj;
+    // ── Uložiť / odstrániť foto ak bola zmenená v modali ─────
+    if(_modalImgPending){
+      if(_modalImgPending.action==='set')    setNaradiaImg(key, _modalImgPending.dataUrl);
+      else if(_modalImgPending.action==='remove') removeNaradiaImg(key);
+      _modalImgPending = null;
+    }
+    // ── Pohyb: pridanie nového náradia ───────────────────────
+    if(isNew){
+      await dbPush('pohyby',{
+        typ:'pridanie', naradieId:key, naradia:obj.name,
+        qty:obj.total||0, kat:obj.kat||'',
+        poznamka: [obj.model, obj.sn].filter(Boolean).join(' · ') || '',
+        cas:now(), ts:Date.now(), user:currentUser?.name||''
+      });
+    } else {
+      // ── Pohyb: úprava existujúceho náradia ─────────────────
+      const totalStare = old ? (old.total||0) : 0;
+      const totalNove  = obj.total||0;
+      if(totalStare !== totalNove || (old && old.name !== obj.name)){
+        await dbPush('pohyby',{
+          typ:'uprava', naradieId:key, naradia:obj.name,
+          totalStare, totalNove,
+          qty: Math.abs(totalNove - totalStare),
+          poznamka: (old && old.name !== obj.name) ? 'Názov: "'+old.name+'" → "'+obj.name+'"' : '',
+          cas:now(), ts:Date.now(), user:currentUser?.name||''
+        });
+      }
+    }
+    closeModal('modal-add-naradia');
+    closeModal('modal-naradia-match');
+    renderNaradiaMgmt();
+    renderSklad();
+    toast('Náradie uložené','ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.doSaveNaradia=doSaveNaradia;
+
+async function navysitNaradia(existId, pridatKs){
+  const n = S.naradia[existId];
+  if(!n) return;
+  const totalStare = n.total||0;
+  const newTotal   = totalStare + pridatKs;
+  try{
+    await dbSet('naradia/'+existId, Object.assign({}, n, {total: newTotal}));
+    S.naradia[existId] = Object.assign({}, n, {total: newTotal});
+    await dbPush('pohyby',{
+      typ:'navysenie', naradieId:existId, naradia:n.name,
+      qty:pridatKs, totalStare, totalNove:newTotal,
+      cas:now(), ts:Date.now(), user:currentUser?.name||''
+    });
+    closeModal('modal-naradia-match');
+    closeModal('modal-add-naradia');
+    renderNaradiaMgmt();
+    renderSklad();
+    toast('Počet navýšený: '+n.name+' → '+newTotal+' ks','ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.navysitNaradia=navysitNaradia;
+
+function openNaradieMatchModal(matches, newData){
+  const pridatKs = newData.total || 1;
+
+  let html = `
+    <div style="margin-bottom:14px;font-size:13px;color:var(--text2)">
+      V databáze sa ${matches.length===1?'nachádza':'nachádzajú'} <strong>${matches.length}</strong>
+      ${matches.length===1?'položka':'položky/položiek'} s názvom <strong>"${matches[0].name}"</strong>.
+      Čo chcete urobiť?
+    </div>`;
+
+  html += `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:8px">
+    Navýšiť počet u existujúceho náradia o ${pridatKs} ks:</div>`;
+  html += `<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">`;
+  matches.forEach(function(n){
+    const vs = vSklade(n.id);
+    const ns = naStavbe(n.id);
+    html += `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;background:var(--surface2);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div>
+        <div style="font-weight:600;font-size:13px">${n.name}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">
+          ${n.kat||''}${n.model?' · '+n.model:''}${n.sn?' · SN: '+n.sn:''}
+        </div>
+        <div style="font-size:11px;margin-top:3px">
+          <span style="color:var(--accent);font-weight:600">V sklade: ${vs} ks</span>
+          ${ns>0?` · <span style="color:var(--warn)">Na stavbách: ${ns} ks</span>`:''}
+          · Celkom: ${n.total} ks
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm" id="navysit-btn-${n.id}">
+        + ${pridatKs} ks → ${(n.total||0)+pridatKs} ks celkom
+      </button>
+    </div>`;
+  });
+  html += `</div>`;
+
+  html += `<div style="border-top:1px solid var(--border);margin:4px 0 14px;"></div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:8px">
+      Alebo vytvoriť ako NOVÉ náradie (iné SN, farba, variant…):</div>
+    <button class="btn btn-sm" id="naradia-match-add-new-btn" style="width:100%;justify-content:center;border:1.5px dashed var(--border2)">
+      <svg class="icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Pridať ako nové náradie s názvom „${matches[0].name}"
+    </button>`;
+
+  window._pendingNewNaradia = newData;
+  document.getElementById('naradia-match-body').innerHTML = html;
+
+  matches.forEach(function(n){
+    var btn = document.getElementById('navysit-btn-'+n.id);
+    if(btn){
+      var nId = n.id;
+      var ks  = pridatKs;
+      btn.addEventListener('click', function(){ navysitNaradia(nId, ks); });
+    }
+  });
+
+  var addNewBtn = document.getElementById('naradia-match-add-new-btn');
+  if(addNewBtn){
+    addNewBtn.addEventListener('click', function(){
+      doSaveNaradia('', window._pendingNewNaradia);
+    });
+  }
+
+  openModal('modal-naradia-match');
+}
+window.openNaradieMatchModal = openNaradieMatchModal;
+
+// ════════════════════════════════════════════════════════════════
+//  STAVBY MGMT
+// ════════════════════════════════════════════════════════════════
+function renderStavbyMgmt(){
+  const isAdm = isAdmin();
+  const el=document.getElementById('stavby-list-mgmt');
+  el.innerHTML=stavbyArr().map(s=>{
+    const objs = objektyArr(s.id);
+    const totalOnSite = naradiaArr().reduce(function(sum,n){ return sum+naStavbeCelkom(s.id,n.id); },0);
+    // Admin môže spravovať objekty na všetkých stavbách
+    // Skladník môže spravovať objekty len na EXT_000
+    const canManageObj = isAdmin() || (canEditSklad() && s.id === 'EXT_000');
+    const objHtml = objs.length > 0
+      ? `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">
+          ${objs.map(o=>`
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;background:var(--surface2);border:1px solid var(--border);padding:2px 8px;border-radius:99px">
+              ${o.name}
+              <span class="badge ${o.stav==='Aktívny'?'badge-green':'badge-gray'}" style="font-size:9px;padding:1px 5px">${o.stav}</span>
+              ${canManageObj?`<button onclick="editObjekt('${s.id}','${o.id}')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--text3);padding:0 2px" title="Upraviť">✏</button>`:''}
+              ${canManageObj?`<button onclick="deleteObjekt('${s.id}','${o.id}','${o.name}')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--danger);padding:0 2px" title="Zmazať">✕</button>`:''}
+            </span>`).join('')}
+          ${canManageObj && objs.length < 10 ? `<button class="btn btn-sm" style="font-size:11px;padding:2px 10px" onclick="addObjekt('${s.id}')">+ Objekt</button>` : ''}
+         </div>`
+      : canManageObj ? `<div style="margin-top:4px"><button class="btn btn-sm" style="font-size:11px;padding:2px 10px" onclick="addObjekt('${s.id}')">+ Pridať objekt</button></div>` : '';
+    return `<div class="user-item" style="flex-direction:column;align-items:flex-start;gap:6px">
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%;gap:10px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="user-avatar">${s.kod.slice(0,2)}</div>
+          <div class="user-info">
+            <div class="user-name">${s.name} <span class="badge ${s.stav==='Aktívna'?'badge-green':s.stav==='Dokončená'?'badge-gray':'badge-amber'}" style="margin-left:4px">${s.stav}</span></div>
+            <div class="user-role">${s.kod} · ${s.adresa||''} · ${totalOnSite} ks na stavbe · ${objs.length} objektov</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          ${isAdm ? `<button class="btn btn-sm" onclick="editStavba('${s.id}')">✏ Upraviť</button>` : ''}
+          ${isAdm ? `<button class="btn btn-sm btn-danger" onclick="confirmDelete('stavba','${s.id}','${s.name.replace(/'/g,"\\'")}')">🗑</button>` : ''}
+          ${!isAdm ? '<span style="font-size:11px;color:var(--text3)">Iba na čítanie</span>' : ''}
+        </div>
+      </div>
+      ${objHtml}
+    </div>`;
+  }).join('');
+}
+
+function editStavba(id){
+  const s=S.stavby[id];
+  document.getElementById('edit-stavba-id').value=id;
+  document.getElementById('s-name').value=s.name;
+  document.getElementById('s-kod').value=s.kod;
+  document.getElementById('s-adresa').value=s.adresa||'';
+  document.getElementById('s-stav').value=s.stav;
+  fillVedouciSelect(s.vedouci);
+  openModal('modal-add-stavba');
+}
+window.editStavba=editStavba;
+
+function fillVedouciSelect(selected){
+  document.getElementById('s-vedouci').innerHTML=
+    '<option value="">— Vybrať —</option>'+
+    usersArr().map(u=>`<option value="${u.login}" ${u.login===selected?'selected':''}>${u.name}</option>`).join('');
+}
+
+async function saveStavba(){
+  const id=document.getElementById('edit-stavba-id').value;
+  const name=document.getElementById('s-name').value.trim();
+  const kod=document.getElementById('s-kod').value.trim();
+  const adresa=document.getElementById('s-adresa').value.trim();
+  const vedouci=document.getElementById('s-vedouci').value;
+  const stav=document.getElementById('s-stav').value;
+  if(!name||!kod){toast('Zadajte názov a kód stavby','err');return;}
+  const key=id||(kod.replace(/[^a-zA-Z0-9]/g,'_'));
+  const obj={id:key,name,kod,adresa,vedouci,stav};
+  try{
+    await dbSet('stavby/'+key, obj);
+    if(!S.site[key]) await dbSet('site/'+key, {});
+    S.stavby[key] = obj;
+    if(vedouci){
+      var vedouciUser = Object.values(S.users).find(function(u){ return u.login===vedouci; });
+      if(vedouciUser){
+        var stavbyIds = vedouciUser.stavbyIds && vedouciUser.stavbyIds.length
+          ? vedouciUser.stavbyIds.slice()
+          : (vedouciUser.stavbaId ? [vedouciUser.stavbaId] : []);
+        if(stavbyIds.indexOf(key) < 0){
+          stavbyIds.push(key);
+          var updatedUser = Object.assign({}, vedouciUser, {stavbyIds: stavbyIds, stavbaId: stavbyIds[0]});
+          await dbSet('users/'+vedouciUser.id, updatedUser);
+          S.users[vedouciUser.id] = updatedUser;
+          toast('Stavba uložená a priradená stavbyvedúcemu '+vedouciUser.name,'ok');
+        } else {
+          toast('Stavba uložená','ok');
+        }
+      } else {
+        toast('Stavba uložená','ok');
+      }
+    } else {
+      toast('Stavba uložená','ok');
+    }
+    closeModal('modal-add-stavba');
+    renderSidebar();
+    renderStavbyMgmt();
+    renderPouzivatelia();
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.saveStavba=saveStavba;
+
+// ── Správa objektov stavby ────────────────────────────────────
+function addObjekt(stavbaId){
+  if(!isAdmin() && !(canEditSklad() && stavbaId === 'EXT_000')){
+    toast('Nemáte oprávnenie na správu objektov tejto stavby','err'); return;
+  }
+  const objs = objektyArr(stavbaId);
+  if(objs.length >= 10){ toast('Maximálny počet objektov je 10','err'); return; }
+  document.getElementById('edit-objekt-stavba-id').value = stavbaId;
+  document.getElementById('edit-objekt-id').value = '';
+  document.getElementById('o-name').value = '';
+  document.getElementById('o-stav').value = 'Aktívny';
+  document.getElementById('modal-add-objekt-title').textContent = 'Pridať objekt';
+  openModal('modal-add-objekt');
+}
+window.addObjekt = addObjekt;
+
+function editObjekt(stavbaId, objektId){
+  if(!isAdmin() && !(canEditSklad() && stavbaId === 'EXT_000')){
+    toast('Nemáte oprávnenie na správu objektov tejto stavby','err'); return;
+  }
+  const s = S.stavby[stavbaId];
+  const o = s?.objekty?.[objektId];
+  if(!o) return;
+  document.getElementById('edit-objekt-stavba-id').value = stavbaId;
+  document.getElementById('edit-objekt-id').value = objektId;
+  document.getElementById('o-name').value = o.name||'';
+  document.getElementById('o-stav').value = o.stav||'Aktívny';
+  document.getElementById('modal-add-objekt-title').textContent = 'Upraviť objekt';
+  openModal('modal-add-objekt');
+}
+window.editObjekt = editObjekt;
+
+async function saveObjekt(){
+  const stavbaId = document.getElementById('edit-objekt-stavba-id').value;
+  const existId  = document.getElementById('edit-objekt-id').value;
+  const name     = document.getElementById('o-name').value.trim();
+  const stav     = document.getElementById('o-stav').value;
+  if(!name){ toast('Zadajte názov objektu','err'); return; }
+  const key = existId || nextObjektId(stavbaId);
+  if(!key){ toast('Maximálny počet objektov (10) bol dosiahnutý','err'); return; }
+  const obj = { id:key, name, stav };
+  try{
+    await dbSet('stavby/'+stavbaId+'/objekty/'+key, obj);
+    if(!S.stavby[stavbaId].objekty) S.stavby[stavbaId].objekty = {};
+    S.stavby[stavbaId].objekty[key] = obj;
+    // Zabezpeč site path pre objekt
+    if(!S.site[stavbaId]) S.site[stavbaId] = {};
+    closeModal('modal-add-objekt');
+    renderStavbyMgmt();
+    renderSidebar();
+    toast((existId?'Objekt upravený':'Objekt pridaný')+': '+name,'ok');
+  }catch(e){ toast('Chyba: '+e.message,'err'); }
+}
+window.saveObjekt = saveObjekt;
+
+async function deleteObjekt(stavbaId, objektId, name){
+  // Skontroluj či nie je na objekte náradie
+  const site = S.site[stavbaId]||{};
+  const onObj = naradiaArr().reduce(function(s,n){
+    return s+((site[objektId]||{})[n.id]||0);
+  },0);
+  if(onObj > 0){
+    document.getElementById('confirm-title').textContent = 'Objekt nie je možné zmazať';
+    document.getElementById('confirm-msg').textContent = 'Na objekte "'+name+'" je evidovaných '+onObj+' ks náradia. Najprv vráťte náradie do skladu.';
+    document.getElementById('confirm-ok-btn').style.display='none';
+    openModal('modal-confirm');
+    return;
+  }
+  document.getElementById('confirm-title').textContent = 'Zmazať objekt?';
+  document.getElementById('confirm-msg').textContent = 'Naozaj chcete zmazať objekt "'+name+'"? Táto akcia je nevratná.';
+  document.getElementById('confirm-ok-btn').style.display='';
+  document.getElementById('confirm-ok-btn').onclick = async function(){
+    try{
+      await dbRemove('stavby/'+stavbaId+'/objekty/'+objektId);
+      await dbRemove('site/'+stavbaId+'/'+objektId);
+      if(S.stavby[stavbaId]?.objekty) delete S.stavby[stavbaId].objekty[objektId];
+      closeModal('modal-confirm');
+      renderStavbyMgmt();
+      renderSidebar();
+      toast('Objekt zmazaný','ok');
+    }catch(e){ toast('Chyba: '+e.message,'err'); }
+  };
+  openModal('modal-confirm');
+}
+window.deleteObjekt = deleteObjekt;
+
+// ════════════════════════════════════════════════════════════════
+//  USERS
+// ════════════════════════════════════════════════════════════════
+function renderPouzivatelia(){
+  const isAdm = isAdmin();
+  const el=document.getElementById('user-list');
+  el.innerHTML=usersArr().map(u=>`<div class="user-item">
+    <div class="user-avatar">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}</div>
+    <div class="user-info">
+      <div class="user-name">${u.name}
+        <span class="${u.role==='admin'?'role-admin':u.role==='skladnik'?'role-skladnik':'role-stavby'}">${u.role==='admin'?'Administrátor':u.role==='skladnik'?'Skladník':'Stavbyvedúci'}</span>
+      </div>
+      <div class="user-role">@${u.login} ${(function(){
+        var ids = (u.stavbyIds&&u.stavbyIds.length) ? u.stavbyIds : (u.stavbaId?[u.stavbaId]:[]);
+        var platne = ids.filter(id=>S.stavby[id]).map(id=>S.stavby[id].kod);
+        return platne.length ? '· '+platne.join(', ') : '';
+      })()}</div>
+      ${isAdm ? `<div class="user-pass-row">
+        <span class="user-pass-label">Heslo:</span>
+        <span class="user-pass-dots" id="pass-dots-${u.id}">••••••••</span>
+        <span class="user-pass-text" id="pass-text-${u.id}" style="display:none">${u.pass||''}</span>
+        <button class="pass-eye-btn" onclick="togglePassView('${u.id}')" title="Zobraziť/skryť heslo" id="pass-eye-${u.id}">
+          <svg id="pass-eye-icon-${u.id}" class="icon" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>` : ''}
+    </div>
+    <div style="display:flex;gap:6px">
+      ${isAdm ? `<button class="btn btn-sm" onclick="editUser('${u.id}')">✏ Upraviť</button>` : ''}
+      ${isAdm && u.id!=='u1' ? `<button class="btn btn-sm btn-danger" onclick="confirmDelete('user','${u.id}','${u.name}')">🗑</button>` : ''}
+      ${!isAdm ? '<span style="font-size:11px;color:var(--text3)">Iba na čítanie</span>' : ''}
+    </div>
+  </div>`).join('');
+}
+
+function togglePassView(uid){
+  const dots = document.getElementById('pass-dots-'+uid);
+  const text  = document.getElementById('pass-text-'+uid);
+  const icon  = document.getElementById('pass-eye-icon-'+uid);
+  const shown = text.style.display !== 'none';
+  if(shown){
+    text.style.display  = 'none';
+    dots.style.display  = '';
+    icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>';
+  } else {
+    text.style.display  = '';
+    dots.style.display  = 'none';
+    icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+  }
+}
+window.togglePassView = togglePassView;
+
+function editUser(id){
+  const u=S.users[id];
+  document.getElementById('edit-user-id').value=id;
+  document.getElementById('u-name').value=u.name;
+  document.getElementById('u-login').value=u.login;
+  document.getElementById('u-pass').value=u.pass;
+  document.getElementById('u-role').value=u.role;
+  var sel = u.stavbyIds && u.stavbyIds.length ? u.stavbyIds : (u.stavbaId ? [u.stavbaId] : []);
+  fillUserStavbaSelect(sel);
+  toggleStavbaField();
+  openModal('modal-add-user');
+}
+window.editUser=editUser;
+
+function fillUserStavbaSelect(selected){
+  var selectedArr = Array.isArray(selected) ? selected : (selected ? [selected] : []);
+  var el = document.getElementById('u-stavby-checkboxes');
+  if(!el) return;
+  el.innerHTML = stavbyArr().map(function(s){
+    var checked = selectedArr.indexOf(s.id) >= 0 ? 'checked' : '';
+    return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:13px;text-transform:none;letter-spacing:0">'
+      +'<input type="checkbox" value="'+s.id+'" '+checked+' style="width:auto;margin:0"> '
+      +s.kod+' – '+s.name+'</label>';
+  }).join('');
+}
+function getSelectedStavby(){
+  var boxes = document.querySelectorAll('#u-stavby-checkboxes input[type=checkbox]');
+  var result = [];
+  boxes.forEach(function(b){ if(b.checked) result.push(b.value); });
+  return result;
+}
+
+function toggleStavbaField(){
+  const role=document.getElementById('u-role').value;
+  document.getElementById('u-stavba-field').style.display=(role==='stavby'||role==='skladnik')?'block':'none';
+}
+window.toggleStavbaField=toggleStavbaField;
+
+async function saveUser(){
+  const id=document.getElementById('edit-user-id').value;
+  const name=document.getElementById('u-name').value.trim();
+  const login=document.getElementById('u-login').value.trim();
+  const pass=document.getElementById('u-pass').value;
+  const role=document.getElementById('u-role').value;
+  const stavbyIds = (role==='admin') ? [] : getSelectedStavby();
+  if(!name||!login||!pass){toast('Vyplňte všetky povinné polia','err');return;}
+  const key=id||(login);
+  const stavbaId = stavbyIds.length===1 ? stavbyIds[0] : (stavbyIds.length>0 ? stavbyIds[0] : '');
+  const obj={id:key,name,login,pass,role,stavbaId,stavbyIds};
+  try{
+    await dbSet('users/'+key, obj);
+    S.users[key] = obj;
+    closeModal('modal-add-user');
+    renderPouzivatelia();
+    toast('Používateľ uložený','ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.saveUser=saveUser;
+
+// ════════════════════════════════════════════════════════════════
+//  DELETE  ← OPRAVENÁ VERZIA
+// ════════════════════════════════════════════════════════════════
+function confirmDelete(type, id, name){
+
+  // ── OCHRANA: náradie sa nedá vymazať ak má evidované kusy ────
+  if(type === 'naradia'){
+    const n  = S.naradia[id];
+    const ns = naStavbe(id);
+    const vs = vSklade(id);
+
+    // Blok 1: náradie je vydané na stavbu
+    if(ns > 0){
+      const stavbyList = stavbyArr()
+        .filter(function(s){ return ((S.site[s.id]||{})[id]||0) > 0; })
+        .map(function(s){ return s.kod + ' (' + ((S.site[s.id]||{})[id]) + ' ks)'; })
+        .join(', ');
+      document.getElementById('confirm-title').textContent = 'Náradie nie je možné vymazať';
+      document.getElementById('confirm-msg').textContent =
+        'Náradie "' + name + '" je momentálne vydané na stavbe a nemôže byť vymazané. ' +
+        'Pred vymazaním musí byť všetko náradie vrátené do centrálneho skladu.\n\n' +
+        'Evidované na: ' + stavbyList + '.';
+      document.getElementById('confirm-ok-btn').style.display = 'none';
+      openModal('modal-confirm');
+      return;
+    }
+
+    // Blok 2: náradie má nenulový celkový počet – ochrana pred stratou evidencie
+    // (platí aj pri viacerých variantoch toho istého náradia)
+    if(n && n.total > 0){
+      document.getElementById('confirm-title').textContent = 'Náradie nie je možné vymazať';
+      document.getElementById('confirm-msg').textContent =
+        'Náradie "' + name + '" má stále evidovaných ' + n.total + ' ks'
+        + (vs > 0 ? ' (z toho ' + vs + ' ks v sklade)' : '') + '. '
+        + 'Pred vymazaním nastavte celkový počet na 0 cez tlačidlo „✏ Upraviť". '
+        + 'Tým potvrdíte zámerné odpísanie tohto náradia z evidencie.';
+      document.getElementById('confirm-ok-btn').style.display = 'none';
+      openModal('modal-confirm');
+      return;
+    }
+  }
+
+  // ── OCHRANA: stavba s náradím sa nedá vymazať ─────────────────
+  if(type === 'stavba'){
+    const site = S.site[id] || {};
+    const totalOnSite = naradiaArr().reduce(function(s,n){ return s+(site[n.id]||0); }, 0);
+    if(totalOnSite > 0){
+      document.getElementById('confirm-title').textContent = 'Stavbu nie je možné zmazať';
+      document.getElementById('confirm-msg').textContent =
+        'Na stavbe "' + name + '" je evidovaných ' + totalOnSite + ' ks náradia. ' +
+        'Pred zmazaním stavby musí byť všetko náradie vrátené do skladu.';
+      document.getElementById('confirm-ok-btn').style.display = 'none';
+      openModal('modal-confirm');
+      return;
+    }
+  }
+
+  // Štandardné potvrdenie výmazu
+  document.getElementById('confirm-ok-btn').style.display = '';
+  document.getElementById('confirm-title').textContent = 'Potvrdiť vymazanie';
+  document.getElementById('confirm-msg').textContent = 'Naozaj chcete vymazať "' + name + '"? Táto akcia je nevratná.';
+  document.getElementById('confirm-ok-btn').onclick = function(){ doDelete(type, id); };
+  openModal('modal-confirm');
+}
+window.confirmDelete=confirmDelete;
+
+async function doDelete(type,id){
+  try{
+    // ── Pohyb: vymazanie náradia ──────────────────────────────
+    if(type === 'naradia'){
+      const n = S.naradia[id];
+      if(n){
+        await dbPush('pohyby',{
+          typ:'vymazanie', naradieId:id, naradia:n.name,
+          qty:n.total||0, kat:n.kat||'',
+          poznamka: [n.model, n.sn].filter(Boolean).join(' · ') || '',
+          cas:now(), ts:Date.now(), user:currentUser?.name||''
+        });
+      }
+    }
+    await dbRemove(type==='naradia'?'naradia/'+id : type==='stavba'?'stavby/'+id : 'users/'+id);
+    if(type==='stavba') await dbRemove('site/'+id);
+    if(type==='naradia') delete S.naradia[id];
+    else if(type==='stavba'){ delete S.stavby[id]; delete S.site[id]; }
+    else if(type==='user') delete S.users[id];
+    closeModal('modal-confirm');
+    renderSidebar();
+    if(type==='naradia') renderNaradiaMgmt();
+    else if(type==='stavba') renderStavbyMgmt();
+    else if(type==='user') renderPouzivatelia();
+    toast('Vymazané','ok');
+  }catch(e){toast('Chyba: '+e.message,'err');}
+}
+window.doDelete=doDelete;
+
+// ════════════════════════════════════════════════════════════════
+//  EXPORT
+// ════════════════════════════════════════════════════════════════
+function exportSkladExcel(){
+  const wb=XLSX.utils.book_new();
+  const data=[['#','Náradie','Jednotka','Kategória','Celkom','V sklade','Na stavbách','Stav']];
+  naradiaArr().forEach((n,i)=>{
+    const vs=vSklade(n.id),ns=naStavbe(n.id);
+    data.push([i+1,n.name,n.unit,n.kat||'',n.total,vs,ns,vs===0?'Vydané':vs<n.total?'Čiastočne':'Dostupné']);
+  });
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  ws['!cols']=[{wch:4},{wch:35},{wch:8},{wch:22},{wch:10},{wch:10},{wch:12},{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws,'Sklad');
+  XLSX.writeFile(wb,'Sklad_'+today()+'.xlsx');
+}
+window.exportSkladExcel=exportSkladExcel;
+
+function exportSkladPDF(){
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape'});
+  doc.setFont('helvetica','bold');doc.setFontSize(14);doc.text('Centrálny sklad – stav náradia',14,16);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text('Export: '+now(),14,22);
+  doc.autoTable({startY:27,
+    head:[['#','Náradie','Jedn.','Celkom','V sklade','Na stavbách','Stav']],
+    body:naradiaArr().map((n,i)=>{const vs=vSklade(n.id),ns=naStavbe(n.id);return[i+1,n.name,n.unit,n.total,vs,ns,vs===0?'Vydané':vs<n.total?'Čiastočne':'Dostupné']}),
+    styles:{fontSize:9},headStyles:{fillColor:[44,95,46],textColor:255,fontStyle:'bold'},
+    alternateRowStyles:{fillColor:[245,243,239]}});
+  doc.save('Sklad_'+today()+'.pdf');
+}
+window.exportSkladPDF=exportSkladPDF;
+
+// ════════════════════════════════════════════════════════════════
+//  INVENTÚRA – TLAČITEĽNÝ DOKLAD
+// ════════════════════════════════════════════════════════════════
+function printInventura(){
+  const naradia = naradiaArr();
+  const stavby  = stavbyArr();
+  const datum   = now();
+  const todayStr = new Date().toLocaleDateString('sk-SK',{day:'2-digit',month:'2-digit',year:'numeric'});
+
+  // Zoskupenie podľa kategórie
+  const kats = {};
+  naradia.forEach(function(n){
+    const k = n.kat || 'Iné';
+    if(!kats[k]) kats[k] = [];
+    kats[k].push(n);
+  });
+
+  // Celkové štatistiky
+  const totalKs     = naradia.reduce(function(s,n){ return s+( n.total||0); },0);
+  const vSkladeKs   = naradia.reduce(function(s,n){ return s+vSklade(n.id); },0);
+  const naStavbachKs= naradia.reduce(function(s,n){ return s+naStavbe(n.id); },0);
+  const vydanePolozky = naradia.filter(function(n){ return vSklade(n.id)===0 && n.total>0; }).length;
+
+  // Riadky pre každú stavbu (distribúcia)
+  const stavbyRiadky = stavby.map(function(s){
+    const site  = S.site[s.id]||{};
+    const total = naradia.reduce(function(sm,n){ return sm+(site[n.id]||0); },0);
+    if(!total) return '';
+    const items = naradia.filter(function(n){ return (site[n.id]||0)>0; })
+      .map(function(n){ return '#'+(n.cislo||'—')+' '+n.name+' × '+(site[n.id]||0)+' '+n.unit; })
+      .join(', ');
+    return '<tr><td>'+s.kod+'</td><td>'+s.name+'</td><td style="text-align:center;font-weight:700;color:#7A5C1E">'+total+' ks</td><td style="font-size:11px;color:#666">'+items+'</td></tr>';
+  }).filter(Boolean).join('');
+
+  // Riadky náradia zoskupené po kategóriách
+  let naradieRows = '';
+  Object.keys(kats).sort().forEach(function(kat){
+    naradieRows += '<tr style="background:#f0ede8"><td colspan="8" style="padding:6px 10px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#5a5448">'+kat+'</td></tr>';
+    kats[kat].forEach(function(n){
+      const vs = vSklade(n.id);
+      const ns = naStavbe(n.id);
+      const stavColor = vs===0 ? '#8B2635' : vs < n.total ? '#7A5C1E' : '#1A5C1A';
+      const stavText  = vs===0 ? 'Vydané' : vs < n.total ? 'Čiastočne' : 'Dostupné';
+      // Stavby kde je náradie
+      const naStavbachText = stavby
+        .filter(function(s){ return ((S.site[s.id]||{})[n.id]||0)>0; })
+        .map(function(s){ return s.kod+':'+((S.site[s.id]||{})[n.id]); })
+        .join(', ') || '—';
+      naradieRows += '<tr>'
+        +'<td style="text-align:center;font-weight:700;color:#2C5F2E;font-size:11px">'+(n.cislo||'—')+'</td>'
+        +'<td style="font-weight:600">'+n.name+(n.model?'<br><span style="font-weight:400;font-size:10px;color:#888">'+n.model+'</span>':'')+'</td>'
+        +'<td style="font-size:10px;color:#666">'+(n.sn||'—')+'</td>'
+        +'<td style="text-align:center">'+n.unit+'</td>'
+        +'<td style="text-align:center;font-weight:700">'+n.total+'</td>'
+        +'<td style="text-align:center;font-weight:700;color:'+stavColor+'">'+vs+'</td>'
+        +'<td style="text-align:center;color:#7A5C1E">'+ns+'</td>'
+        +'<td style="font-size:10px;color:#666">'+naStavbachText+'</td>'
+        +'</tr>';
+    });
+  });
+
+  const html = `<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<title>Inventúra skladu – ${todayStr}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1A1814;background:#fff;padding:20px}
+  @media print{body{padding:0} .no-print{display:none} @page{margin:12mm 10mm}}
+  h1{font-size:20px;font-weight:700;color:#2C5F2E;margin-bottom:2px}
+  h2{font-size:13px;font-weight:600;color:#2C5F2E;margin:18px 0 6px;border-bottom:2px solid #2C5F2E;padding-bottom:4px}
+  .meta{font-size:11px;color:#666;margin-bottom:16px}
+  .metrics{display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+  .met{border:1px solid #D8D3CB;border-radius:8px;padding:10px 16px;min-width:110px;text-align:center}
+  .met-val{font-size:22px;font-weight:700;line-height:1}
+  .met-lbl{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-top:3px}
+  .green{color:#1A5C1A}.amber{color:#7A5C1E}.red{color:#8B2635}.blue{color:#1A3D6E}
+  table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:16px}
+  th{background:#2C5F2E;color:#fff;padding:6px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+  td{padding:5px 8px;border-bottom:1px solid #E8E4DD;vertical-align:middle}
+  tr:hover td{background:#F5F3EF}
+  .sign-block{margin-top:32px;display:flex;gap:40px;flex-wrap:wrap}
+  .sign-line{flex:1;min-width:180px;border-top:1px solid #333;padding-top:4px;font-size:11px;color:#666;margin-top:40px}
+  .footer{margin-top:24px;font-size:10px;color:#aaa;border-top:1px solid #eee;padding-top:8px;display:flex;justify-content:space-between}
+  .print-btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;background:#2C5F2E;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:16px}
+  .print-btn:hover{background:#245026}
+</style>
+</head>
+<body>
+<button class="print-btn no-print" onclick="window.print()">🖨 Vytlačiť / Uložiť PDF</button>
+
+<h1>📦 Inventúrny doklad – Centrálny sklad</h1>
+<div class="meta">Dátum: <strong>${todayStr}</strong> &nbsp;|&nbsp; Vytvoril: <strong>${(currentUser&&currentUser.name)||'—'}</strong> &nbsp;|&nbsp; Čas: <strong>${datum}</strong></div>
+
+<div class="metrics">
+  <div class="met"><div class="met-val">${naradia.length}</div><div class="met-lbl">Kariet náradia</div></div>
+  <div class="met"><div class="met-val">${totalKs}</div><div class="met-lbl">Celkom ks</div></div>
+  <div class="met"><div class="met-val green">${vSkladeKs}</div><div class="met-lbl">V sklade ks</div></div>
+  <div class="met"><div class="met-val amber">${naStavbachKs}</div><div class="met-lbl">Na stavbách ks</div></div>
+  <div class="met"><div class="met-val red">${vydanePolozky}</div><div class="met-lbl">Plne vydaných</div></div>
+  <div class="met"><div class="met-val blue">${stavby.filter(function(s){return s.stav==='Aktívna';}).length}</div><div class="met-lbl">Aktívnych stavieb</div></div>
+</div>
+
+<h2>Zoznam náradia</h2>
+<table>
+  <thead><tr><th style="width:36px;text-align:center">Č.</th><th>Názov náradia</th><th>S/N</th><th style="text-align:center">Jedn.</th><th style="text-align:center">Celkom</th><th style="text-align:center">V sklade</th><th style="text-align:center">Na stavbách</th><th>Distribúcia</th></tr></thead>
+  <tbody>${naradieRows}</tbody>
+</table>
+
+${stavbyRiadky ? `<h2>Distribúcia na stavby</h2>
+<table>
+  <thead><tr><th style="width:80px">Kód</th><th>Stavba</th><th style="text-align:center;width:80px">Celkom ks</th><th>Náradie</th></tr></thead>
+  <tbody>${stavbyRiadky}</tbody>
+</table>` : ''}
+
+<div class="sign-block">
+  <div><div class="sign-line">Vyhotovil: ___________________________</div></div>
+  <div><div class="sign-line">Skontroloval: ________________________</div></div>
+  <div><div class="sign-line">Dátum: ______________________________</div></div>
+</div>
+
+<div class="footer">
+  <span>Register náradia &nbsp;|&nbsp; Inventúra skladu &nbsp;|&nbsp; ${todayStr}</span>
+  <span>Celkom kariet: ${naradia.length} &nbsp;|&nbsp; Celkom ks: ${totalKs}</span>
+</div>
+</body>
+</html>`;
+
+  const win = window.open('','_blank','width=1000,height=800,scrollbars=yes');
+  if(!win){ toast('Prehliadač blokuje popup – povoľte ho pre túto stránku','err'); return; }
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+}
+window.printInventura = printInventura;
+
+function exportStavbaExcel(){
+  const stavba=S.stavby[currentStavbaId]; if(!stavba) return;
+  const wb=XLSX.utils.book_new();
+  const objs=objektyArr(stavba.id);
+  const naradia=naradiaArr();
+
+  // List 1: Náradie na stavbe (zoskupené po objektoch)
+  const data=[['#','Č.karty','Náradie','Jednotka','Na stavbe','Objekt']];
+  let i=0;
+  if(objs.length > 0){
+    objs.forEach(function(o){
+      naradia.forEach(function(n){
+        const qty=((S.site[stavba.id]||{})[o.id]||{})[n.id]||0;
+        if(qty>0){ i++; data.push([i, n.cislo||'', n.name, n.unit, qty, o.name]); }
+      });
+    });
+    // Flat (bez objektu)
+    naradia.forEach(function(n){
+      const flat=(S.site[stavba.id]||{})[n.id];
+      if(typeof flat==='number' && flat>0){ i++; data.push([i, n.cislo||'', n.name, n.unit, flat, 'Bez objektu']); }
+    });
+  } else {
+    naradia.filter(n=>naStavbeCelkom(stavba.id,n.id)>0).forEach(function(n){
+      i++; data.push([i, n.cislo||'', n.name, n.unit, naStavbeCelkom(stavba.id,n.id), '']);
+    });
+  }
+
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), stavba.kod);
+
+  // List 2: Pohyby
+  const ph=[['Čas','Typ','Náradie','Č.','Ks','Objekt','Osoba/Stav','Poznámka']];
+  pohybyArr().filter(p=>p.stavbaId===stavba.id).forEach(p=>{
+    ph.push([p.cas, p.typ==='vydaj'?'Výdaj':'Vrátenie', p.naradia||'', p.cislo||'', p.qty,
+      p.objektName||'', p.osoba||p.stav||'', p.poznamka||'']);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ph), 'Pohyby');
+  XLSX.writeFile(wb, stavba.kod+'_'+today()+'.xlsx');
+}
+window.exportStavbaExcel=exportStavbaExcel;
+
+function exportStavbaPDF(){
+  const stavba=S.stavby[currentStavbaId]; if(!stavba) return;
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF();
+  const objs=objektyArr(stavba.id);
+  const naradia=naradiaArr();
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.text(stavba.name,14,16);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text(stavba.kod+' · '+now(),14,22);
+
+  const body=[];
+  let i=0;
+  if(objs.length > 0){
+    objs.forEach(function(o){
+      naradia.forEach(function(n){
+        const qty=((S.site[stavba.id]||{})[o.id]||{})[n.id]||0;
+        if(qty>0){ i++; body.push([i, n.cislo||'—', n.name, n.unit, qty, o.name]); }
+      });
+    });
+    naradia.forEach(function(n){
+      const flat=(S.site[stavba.id]||{})[n.id];
+      if(typeof flat==='number' && flat>0){ i++; body.push([i, n.cislo||'—', n.name, n.unit, flat, 'Bez objektu']); }
+    });
+  } else {
+    naradia.filter(n=>naStavbeCelkom(stavba.id,n.id)>0).forEach(function(n){
+      i++; body.push([i, n.cislo||'—', n.name, n.unit, naStavbeCelkom(stavba.id,n.id), '']);
+    });
+  }
+
+  if(body.length===0){
+    doc.text('Na tejto stavbe nie je evidované žiadne náradie.',14,32);
+  } else {
+    doc.autoTable({startY:28,
+      head:[['#','Č.','Náradie','Jedn.','Na stavbe','Objekt']],
+      body:body,
+      styles:{fontSize:8},
+      headStyles:{fillColor:[44,95,46],textColor:255,fontStyle:'bold'},
+      columnStyles:{0:{cellWidth:8},1:{cellWidth:12},4:{cellWidth:18},5:{cellWidth:28}}
+    });
+  }
+  doc.save(stavba.kod+'_'+today()+'.pdf');
+}
+window.exportStavbaPDF=exportStavbaPDF;
+
+function clearDateFilter(){
+  var od=document.getElementById('filter-datum-od');
+  var doo=document.getElementById('filter-datum-do');
+  var fS=document.getElementById('filter-stavba-pohyby');
+  var fT=document.getElementById('filter-typ-pohyby');
+  if(od) od.value='';
+  if(doo) doo.value='';
+  if(fS) fS.value='';
+  if(fT) fT.value='';
+  renderPohyby();
+}
+window.clearDateFilter=clearDateFilter;
+
+function formatDate(dateStr){
+  if(!dateStr) return '';
+  var d=new Date(dateStr);
+  return d.toLocaleDateString('sk-SK');
+}
+
+function getFilteredPohyby(){
+  const fS=document.getElementById('filter-stavba-pohyby')?.value||'';
+  const fT=document.getElementById('filter-typ-pohyby')?.value||'';
+  const fOd=document.getElementById('filter-datum-od')?.value||'';
+  const fDo=document.getElementById('filter-datum-do')?.value||'';
+  let data=pohybyArr();
+  if(fS) data=data.filter(p=>p.stavbaId===fS);
+  if(fT) data=data.filter(p=>p.typ===fT);
+  if(fOd) data=data.filter(function(p){ return p.ts?p.ts>=new Date(fOd).getTime():true; });
+  if(fDo) data=data.filter(function(p){ return p.ts?p.ts<=new Date(fDo+'T23:59:59').getTime():true; });
+  return data;
+}
+
+function exportPohybyExcel(){
+  const fOd=document.getElementById('filter-datum-od')?.value||'';
+  const fDo=document.getElementById('filter-datum-do')?.value||'';
+  const filtered=getFilteredPohyby();
+  const wb=XLSX.utils.book_new();
+  const info=[
+    ['REGISTER NARADIA – KANGO Stavby spol. s r.o.'],['Export pohybov naradia'],[''],
+    ['Datum exportu:',now()],
+    ['Obdobie od:',fOd?formatDate(fOd):'vsetky zaznamy'],
+    ['Obdobie do:',fDo?formatDate(fDo):'vsetky zaznamy'],
+    ['Pocet zaznamov:',filtered.length],[''],
+  ];
+  const wsInfo=XLSX.utils.aoa_to_sheet(info);
+  wsInfo['!cols']=[{wch:20},{wch:30}];
+  XLSX.utils.book_append_sheet(wb,wsInfo,'Info');
+  const data=[['Cas','C.','Typ','Stavba','Naradia','Ks','Zodp. osoba','Stav naradia','Poznamka','Pouzivatel']];
+  filtered.forEach(function(p){
+    data.push([p.cas,getPohybCislo(p),p.typ==='vydaj'?'Vydaj':p.typ==='vratenie'?'Vratenie':p.typ==='pridanie'?'Pridanie':p.typ==='uprava'?'Uprava':p.typ==='navysenie'?'Navysenie':'Vymazanie',p.stavba||'',p.naradia||'',p.qty,p.osoba||'',p.stav||'',p.poznamka||'',p.user||'']);
+  });
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  ws['!cols']=[{wch:16},{wch:5},{wch:12},{wch:22},{wch:30},{wch:6},{wch:18},{wch:14},{wch:24},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,ws,'Pohyby');
+  const suffix=(fOd?'_od'+fOd:'')+(fDo?'_do'+fDo:'');
+  XLSX.writeFile(wb,'Pohyby'+suffix+'_'+today()+'.xlsx');
+}
+window.exportPohybyExcel=exportPohybyExcel;
+
+function exportPohybyPDF(){
+  const fOd=document.getElementById('filter-datum-od')?.value||'';
+  const fDo=document.getElementById('filter-datum-do')?.value||'';
+  const filtered=getFilteredPohyby();
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape'});
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(14);
+  doc.text('KANGO Stavby – História pohybov náradia',14,14);
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(9);
+  var obdobie='Obdobie: '+(fOd?formatDate(fOd):'všetky záznamy')+' – '+(fDo?formatDate(fDo):'všetky záznamy');
+  doc.text(obdobie,14,20);
+  doc.text('Export: '+now()+'  |  Počet záznamov: '+filtered.length,14,25);
+  doc.autoTable({
+    startY:30,
+    head:[['Čas','Č.','Typ','Stavba','Náradie','Ks','Zodp. osoba','Stav','Poznámka']],
+    body:filtered.map(function(p){
+      const typLabel = p.typ==='vydaj'?'Výdaj':p.typ==='vratenie'?'Vrátenie':p.typ==='pridanie'?'Pridanie':p.typ==='uprava'?'Úprava':p.typ==='navysenie'?'Navýšenie':'Vymazanie';
+      return [p.cas, getPohybCislo(p)||'—', typLabel, p.stavba||'', p.naradia||'', p.qty, p.osoba||'', p.stav||'', p.poznamka||''];
+    }),
+    styles:{fontSize:8,cellPadding:2},
+    headStyles:{fillColor:[44,95,46],textColor:255,fontStyle:'bold'},
+    alternateRowStyles:{fillColor:[245,243,239]},
+    columnStyles:{5:{cellWidth:8},2:{cellWidth:16},1:{cellWidth:8}}
+  });
+  const suffix=(fOd?'_od'+fOd:'')+(fDo?'_do'+fDo:'');
+  doc.save('Pohyby'+suffix+'_'+today()+'.pdf');
+}
+window.exportPohybyPDF=exportPohybyPDF;
+
+// ════════════════════════════════════════════════════════════════
+//  IMPORT Z EXCELU
+// ════════════════════════════════════════════════════════════════
+const VALID_UNITS = ['ks','m','m²','kg','bal'];
+const VALID_KATS  = ['Elektrické náradie','Ručné náradie','Meracie prístroje','Ochranné pomôcky','Lešenie a rebríky','Mechanizácia / Stroje','Kancelárske vybavenie','Iné'];
+
+function downloadImportTemplate(){
+  const wb = XLSX.utils.book_new();
+  const header = [['Názov náradia','Jednotka','Model / typ','Výrobné číslo (S/N)','Celkový počet','Kategória','Poznámka']];
+  const example = [
+    ['Vŕtačka príklepová','ks','Bosch GBH 2-26','SN-001',2,'Elektrické náradie','Záručný list v sklade'],
+    ['Lopaty','ks','','',10,'Ručné náradie',''],
+    ['Rotačný laser','ks','Leica Rugby 640','SN-002',1,'Meracie prístroje',''],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(header.concat(example));
+  ws['!cols'] = [{wch:30},{wch:10},{wch:20},{wch:18},{wch:14},{wch:22},{wch:28}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Náradie');
+  const info = [
+    ['IMPORT ŠABLÓNA – Register náradia'],[''],
+    ['Stĺpec','Povinný?','Povolené hodnoty / popis'],
+    ['Názov náradia','ÁNO','Ľubovoľný text'],
+    ['Jednotka','nie','ks | m | m² | kg | bal   (predvolené: ks)'],
+    ['Model / typ','nie','Ľubovoľný text'],
+    ['Výrobné číslo (S/N)','nie','Ľubovoľný text'],
+    ['Celkový počet','nie','Číslo ≥ 0   (predvolené: 1)'],
+    ['Kategória','nie','Elektrické náradie | Ručné náradie | Meracie prístroje | Ochranné pomôcky | Lešenie a rebríky | Mechanizácia / Stroje | Kancelárske vybavenie | Iné   (predvolené: Iné)'],
+    ['Poznámka','nie','Ľubovoľný text'],
+    [''],['Poznámky:'],
+    ['• Prvý riadok je hlavička – nemeňte ho.'],
+    ['• Ak náradie s rovnakým názvom už existuje, systém sa opýta čo urobiť.'],
+    ['• Prázdne voliteľné polia dostanú predvolenú hodnotu.'],
+  ];
+  const wsInfo = XLSX.utils.aoa_to_sheet(info);
+  wsInfo['!cols'] = [{wch:22},{wch:10},{wch:70}];
+  XLSX.utils.book_append_sheet(wb, wsInfo, 'Inštrukcie');
+  XLSX.writeFile(wb, 'Import_sablona_naradia.xlsx');
+}
+window.downloadImportTemplate = downloadImportTemplate;
+
+function handleImportFile(event){
+  const file = event.target.files[0];
+  event.target.value = '';
+  if(!file) return;
+  if(!file.name.match(/\.(xlsx|xls|ods)$/i)){
+    toast('Nepodporovaný formát. Použite .xlsx alebo .xls','err'); return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const wb   = XLSX.read(e.target.result, {type:'binary'});
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+      if(!rows.length){ toast('Súbor neobsahuje žiadne dáta','err'); return; }
+      parseAndShowImportPreview(rows);
+    } catch(err){
+      toast('Chyba čítania súboru: '+err.message,'err');
+    }
+  };
+  reader.readAsBinaryString(file);
+}
+window.handleImportFile = handleImportFile;
+
+function mapRow(row){
+  function col(){ for(var i=0;i<arguments.length;i++){ var v=row[arguments[i]]; if(v!==undefined&&v!=='') return String(v).trim(); } return ''; }
+  const name  = col('Názov náradia','Nazov naradia','Nazov','name','Name','NÁZOV');
+  const unit  = col('Jednotka','Unit','unit','jednotka') || 'ks';
+  const model = col('Model / typ','Model','model','Model/typ');
+  const sn    = col('Výrobné číslo (S/N)','SN','Vyrobne cislo','sn','S/N');
+  const total = parseInt(col('Celkový počet','Celkovy pocet','Pocet','total','Total','množstvo')) || 1;
+  const kat   = col('Kategória','Kategoria','kat','Kat') || 'Iné';
+  const pozn  = col('Poznámka','Poznamka','pozn','Note','note');
+  return { name, unit: VALID_UNITS.includes(unit)?unit:'ks', model, sn, total: Math.max(0,total),
+           kat: VALID_KATS.includes(kat)?kat:'Iné', pozn };
+}
+
+let importRows = [];
+
+function parseAndShowImportPreview(rawRows){
+  importRows = [];
+  const errors = [];
+
+  rawRows.forEach(function(row, i){
+    const mapped = mapRow(row);
+    if(!mapped.name){
+      errors.push('Riadok '+(i+2)+': chýba Názov náradia – preskočený.');
+      return;
+    }
+    const existing = naradiaArr().find(function(n){ return n.name.toLowerCase()===mapped.name.toLowerCase(); });
+    importRows.push({ ...mapped, _existing: existing||null, _action: existing?'skip':'add' });
+  });
+
+  if(!importRows.length && errors.length){
+    toast('Žiadne platné riadky na import','err'); return;
+  }
+
+  let html = '';
+  if(errors.length){
+    html += '<div class="alert alert-warn" style="margin-bottom:10px;font-size:12px">⚠ Preskočené riadky (bez názvu): '+errors.join(' ')+'</div>';
+  }
+  html += '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Skontrolujte importované položky. Pre duplicity vyberte akciu.</div>';
+  html += '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+  html += '<thead><tr style="background:var(--surface2)">'
+    + '<th style="padding:6px 8px;text-align:left;white-space:nowrap">Názov</th>'
+    + '<th style="padding:6px 8px;text-align:left">Jedn.</th>'
+    + '<th style="padding:6px 8px;text-align:left">Kat.</th>'
+    + '<th style="padding:6px 8px;text-align:center">Počet</th>'
+    + '<th style="padding:6px 8px;text-align:left">Stav</th>'
+    + '<th style="padding:6px 8px;text-align:left">Akcia</th>'
+    + '</tr></thead><tbody>';
+
+  importRows.forEach(function(r, i){
+    const dupBadge = r._existing
+      ? '<span class="badge badge-amber" style="font-size:10px">Duplikát</span>'
+      : '<span class="badge badge-green" style="font-size:10px">Nové</span>';
+    const actionSel = r._existing
+      ? `<select data-idx="${i}" class="import-action-sel" style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
+           <option value="skip" ${r._action==='skip'?'selected':''}>Preskočiť</option>
+           <option value="update" ${r._action==='update'?'selected':''}>Aktualizovať počet</option>
+           <option value="overwrite" ${r._action==='overwrite'?'selected':''}>Prepísať všetko</option>
+         </select>`
+      : '<span style="color:var(--accent);font-size:11px">Pridať</span>';
+    html += `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:6px 8px"><strong>${r.name}</strong>${r.model?'<br><span style="color:var(--text3)">'+r.model+'</span>':''}</td>
+      <td style="padding:6px 8px">${r.unit}</td>
+      <td style="padding:6px 8px;white-space:nowrap">${r.kat}</td>
+      <td style="padding:6px 8px;text-align:center;font-family:var(--mono)">${r.total}</td>
+      <td style="padding:6px 8px">${dupBadge}</td>
+      <td style="padding:6px 8px">${actionSel}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  html += '<div style="font-size:12px;color:var(--text3);margin-top:10px">Celkom: <strong>'+importRows.length+'</strong> položiek '
+    + '('+importRows.filter(function(r){return !r._existing;}).length+' nových, '
+    + importRows.filter(function(r){return !!r._existing;}).length+' duplicitných)</div>';
+
+  document.getElementById('import-preview-body').innerHTML = html;
+
+  document.querySelectorAll('.import-action-sel').forEach(function(sel){
+    sel.addEventListener('change', function(){
+      importRows[parseInt(this.dataset.idx)]._action = this.value;
+    });
+  });
+
+  openModal('modal-import');
+}
+
+async function confirmImport(){
+  const toProcess = importRows.filter(function(r){ return r._action !== 'skip'; });
+  if(!toProcess.length){ toast('Nič na import (všetko preskočené)',''); closeModal('modal-import'); return; }
+
+  const btn = document.getElementById('import-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = 'Importujem…';
+
+  let added=0, updated=0, errors=0;
+
+  for(var i=0; i<toProcess.length; i++){
+    var r = toProcess[i];
+    try{
+      if(r._action === 'add'){
+        const key = Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,6);
+        const obj = {id:key, name:r.name, unit:r.unit, model:r.model, sn:r.sn, total:r.total, kat:r.kat, pozn:r.pozn};
+        await dbSet('naradia/'+key, obj);
+        S.naradia[key] = obj;
+        added++;
+      } else if(r._action === 'update' && r._existing){
+        const updated_obj = Object.assign({}, r._existing, {total: r.total});
+        await dbSet('naradia/'+r._existing.id, updated_obj);
+        S.naradia[r._existing.id] = updated_obj;
+        updated++;
+      } else if(r._action === 'overwrite' && r._existing){
+        const overwrite_obj = {id:r._existing.id, name:r.name, unit:r.unit, model:r.model, sn:r.sn, total:r.total, kat:r.kat, pozn:r.pozn};
+        await dbSet('naradia/'+r._existing.id, overwrite_obj);
+        S.naradia[r._existing.id] = overwrite_obj;
+        updated++;
+      }
+    } catch(e){
+      errors++;
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Importovať';
+  closeModal('modal-import');
+  renderNaradiaMgmt();
+  renderSklad();
+  const msg = 'Import dokončený: '+added+' pridaných, '+updated+' aktualizovaných'+(errors?' | '+errors+' chýb':'');
+  toast(msg, errors?'':'ok');
+}
+window.confirmImport = confirmImport;
+
+// ════════════════════════════════════════════════════════════════
+//  MODALS
+// ════════════════════════════════════════════════════════════════
+function openModal(id){
+  if(id==='modal-add-naradia'){
+    var editId=document.getElementById('edit-naradia-id').value;
+    if(!editId){
+      document.getElementById('n-name').value='';
+      document.getElementById('n-model').value='';
+      document.getElementById('n-sn').value='';
+      document.getElementById('n-unit').value='ks';
+      document.getElementById('n-total').value=1;
+      document.getElementById('n-kat').value='Elektrické náradie';
+      document.getElementById('n-pozn').value='';
+      document.getElementById('n-dennik').value='';
+      // Reset foto pre nové náradie
+      setTimeout(function(){ refreshModalImgPreview(''); }, 30);
+    }
+    setTimeout(function(){ initNaradieNameAutocomplete(); }, 50);
+  }
+  if(id==='modal-add-stavba'){
+    var editStavbaId=document.getElementById('edit-stavba-id').value;
+    if(!editStavbaId){
+      document.getElementById('s-name').value='';
+      document.getElementById('s-kod').value='';
+      document.getElementById('s-adresa').value='';
+      fillVedouciSelect('');
+      document.getElementById('s-stav').value='Aktívna';
+    }
+  }
+  if(id==='modal-add-user'){
+    var editUserId=document.getElementById('edit-user-id').value;
+    if(!editUserId){
+      document.getElementById('u-name').value='';
+      document.getElementById('u-login').value='';
+      document.getElementById('u-pass').value='';
+      document.getElementById('u-role').value='stavby';
+      fillUserStavbaSelect([]);
+      toggleStavbaField();
+    }
+  }
+  document.getElementById(id).classList.add('open');
+}
+window.openModal=openModal;
+
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+window.closeModal=closeModal;
+
+document.querySelectorAll('.modal-backdrop').forEach(b=>b.addEventListener('click',e=>{if(e.target===b)b.classList.remove('open');}));
+
+// ════════════════════════════════════════════════════════════════
+//  TOAST & LOADING
+// ════════════════════════════════════════════════════════════════
+let toastTimer;
+function toast(msg,type){
+  const el=document.getElementById('toast');
+  el.textContent=msg;
+  el.style.background=type==='err'?'var(--danger)':type==='ok'?'var(--accent)':'var(--text)';
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),2800);
+}
+
+function showLoading(msg){
+  document.getElementById('loading-msg').textContent=msg||'Načítava sa…';
+  document.getElementById('loading-screen').style.display='flex';
+}
+function hideLoading(){
+  document.getElementById('loading-screen').style.display='none';
+  setTimeout(function(){
+    if(!currentUser){
+      initLogin();
+      document.getElementById('login-screen').style.display='flex';
+    }
+  }, 500);
+}
+function showError(msg){
+  document.getElementById('loading-screen').style.display='none';
+  const se = document.getElementById('setup-screen');
+  se.style.display='flex';
+  // Rozdeľ správu na riadky pre čitateľnosť
+  const lines = msg.replace('Chyba pripojenia k Firebase: ','').split('\n');
+  const errEl = document.getElementById('setup-error');
+  errEl.innerHTML = lines.map(function(l){ return l ? '<div>'+l+'</div>' : '<br>'; }).join('');
+  errEl.style.display='block';
+  // Aktualizuj nadpis
+  const h2 = se.querySelector('h2');
+  if(h2) h2.textContent = '⚠️ Problém s pripojením k databáze';
+  // Pridaj rýchly odkaz na Firebase konzolu
+  const fixBtn = document.getElementById('firebase-fix-link');
+  if(!fixBtn){
+    const btn = document.createElement('a');
+    btn.id = 'firebase-fix-link';
+    btn.href = 'https://console.firebase.google.com/project/register-naradia/database/register-naradia-default-rtdb/rules';
+    btn.target = '_blank';
+    btn.style.cssText = 'display:inline-block;margin-top:12px;padding:10px 18px;background:#2C5F2E;color:#fff;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600';
+    btn.textContent = '🔧 Otvoriť Firebase Rules';
+    errEl.parentElement.insertBefore(btn, errEl.nextSibling);
+    const reloadBtn = document.createElement('button');
+    reloadBtn.style.cssText = 'margin-top:8px;margin-left:8px;padding:10px 18px;background:transparent;border:1px solid #ccc;border-radius:6px;font-size:13px;cursor:pointer';
+    reloadBtn.textContent = '🔄 Skúsiť znova';
+    reloadBtn.onclick = function(){ location.reload(); };
+    errEl.parentElement.insertBefore(reloadBtn, btn.nextSibling);
+  }
+}
+
+function now(){const d=new Date();return d.toLocaleDateString('sk-SK')+' '+d.toLocaleTimeString('sk-SK',{hour:'2-digit',minute:'2-digit'});}
+function today(){return new Date().toISOString().slice(0,10);}
+
+// ════════════════════════════════════════════════════════════════
+//  LOGO
+// ════════════════════════════════════════════════════════════════
+function uploadLogo(event){
+  const file=event.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const dataUrl=e.target.result;
+    // Uložiť do localStorage lokálne
+    try{localStorage.setItem('company_logo',dataUrl);}catch(err){}
+    // Uložiť do Firebase — zdieľané pre všetky PC
+    if(db){
+      try{ db.ref('config/logo').set(dataUrl); }catch(err){}
+    }
+    applyLogo(dataUrl);
+    toast('Logo firmy uložené a zdieľané','ok');
+  };
+  reader.readAsDataURL(file);
+}
+function applyLogo(dataUrl){
+  const cl=document.getElementById('company-logo');
+  const dl=document.getElementById('default-logo');
+  if(cl&&dataUrl){cl.src=dataUrl;cl.style.display='block';if(dl)dl.style.display='none';}
+}
+function loadLogo(){
+  // Najprv načítaj z localStorage (okamžite)
+  try{const saved=localStorage.getItem('company_logo');if(saved)applyLogo(saved);}catch(e){}
+  // Potom načítaj z Firebase (zdieľané, môže byť novšie)
+  if(db){
+    try{
+      db.ref('config/logo').on('value', function(snap){
+        const val = snap.val();
+        if(val){
+          applyLogo(val);
+          try{localStorage.setItem('company_logo',val);}catch(e){}
+        }
+      });
+    }catch(e){}
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════════════
+function toggleInputPass(inputId, iconId){
+  var inp  = document.getElementById(inputId);
+  var icon = document.getElementById(iconId);
+  if(!inp) return;
+  var shown = inp.type === 'text';
+  inp.type = shown ? 'password' : 'text';
+  if(icon){
+    icon.innerHTML = shown
+      ? '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'
+      : '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>';
+  }
+}
+window.toggleInputPass = toggleInputPass;
+
+function initNaradieNameAutocomplete(){
+  const input = document.getElementById('n-name');
+  const drop  = document.getElementById('n-name-drop');
+  if(!input || !drop) return;
+
+  input._acInit = false;
+  const newInput = input.cloneNode(true);
+  input.parentNode.replaceChild(newInput, input);
+  const inp = document.getElementById('n-name');
+  const drp = document.getElementById('n-name-drop');
+
+  function getItems(q){
+    const lq = q.toLowerCase().trim();
+    const names = [...new Map(naradiaArr().map(n=>[n.name.toLowerCase(), n.name])).values()];
+    return lq ? names.filter(n => n.toLowerCase().includes(lq)) : [];
+  }
+
+  function highlight(text, q){
+    if(!q) return text;
+    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    if(idx < 0) return text;
+    return text.slice(0,idx)
+      + '<strong style="color:var(--accent)">' + text.slice(idx, idx+q.length) + '</strong>'
+      + text.slice(idx+q.length);
+  }
+
+  function showDrop(){
+    const q = inp.value;
+    const items = getItems(q);
+    if(!items.length){ drp.style.display='none'; return; }
+    drp.innerHTML = items.map(name =>
+      `<div class="ns-item" data-name="${name.replace(/"/g,'&quot;')}">${highlight(name, q)}</div>`
+    ).join('');
+    drp.style.display = 'block';
+    drp.querySelectorAll('.ns-item').forEach(function(el){
+      el.addEventListener('mousedown', function(e){
+        e.preventDefault();
+        inp.value = this.dataset.name;
+        drp.style.display = 'none';
+      });
+    });
+  }
+
+  inp.addEventListener('input',  function(){ showDrop(); });
+  inp.addEventListener('focus',  function(){ showDrop(); });
+  inp.addEventListener('blur',   function(){ setTimeout(function(){ drp.style.display='none'; }, 160); });
+  inp.addEventListener('keydown', function(e){
+    const visible = drp.querySelectorAll('.ns-item');
+    const active  = drp.querySelector('.ns-item.ns-active');
+    if(e.key==='ArrowDown'){
+      e.preventDefault();
+      if(!visible.length) return;
+      if(!active){ visible[0].classList.add('ns-active'); }
+      else {
+        const idx = Array.from(visible).indexOf(active);
+        active.classList.remove('ns-active');
+        visible[Math.min(idx+1,visible.length-1)].classList.add('ns-active');
+      }
+    } else if(e.key==='ArrowUp'){
+      e.preventDefault();
+      if(!active) return;
+      const idx = Array.from(visible).indexOf(active);
+      active.classList.remove('ns-active');
+      visible[Math.max(idx-1,0)].classList.add('ns-active');
+    } else if(e.key==='Enter'){
+      const act = drp.querySelector('.ns-item.ns-active');
+      if(act && drp.style.display!=='none'){ e.preventDefault(); inp.value=act.dataset.name; drp.style.display='none'; }
+    } else if(e.key==='Escape'){
+      drp.style.display='none';
+    }
+  });
+}
+window.initNaradieNameAutocomplete = initNaradieNameAutocomplete;
+
+document.addEventListener('DOMContentLoaded', function(){
+  loadLogo();
+  var lpass = document.getElementById('l-pass');
+  var luser = document.getElementById('l-user');
+  var lbtn  = document.getElementById('login-btn');
+  var obtn  = document.getElementById('logout-btn');
+
+  if(lpass) lpass.addEventListener('keydown', function(e){if(e.key==='Enter') doLogin();});
+  if(luser) luser.addEventListener('keydown', function(e){if(e.key==='Enter' && lpass) lpass.focus();});
+  if(lbtn)  lbtn.addEventListener('click',  function(e){e.preventDefault(); doLogin();});
+  if(obtn)  obtn.addEventListener('click',  function(){ doLogout(); });
+  var clearBtn=document.getElementById('btn-clear-filters');
+  if(clearBtn) clearBtn.addEventListener('click', function(){ clearDateFilter(); });
+
+  if(IS_CONFIGURED){
+    if(initFirebaseSDK()){
+      initFirebase();
+      initImgFolder();
+    } else {
+      showError('Firebase SDK sa nepodarilo načítať.\n\nSkontrolujte internetové pripojenie a obnovte stránku.');
+    }
+  } else {
+    document.getElementById('loading-screen').style.display='none';
+    document.getElementById('setup-screen').style.display='flex';
+  }
+});
+</script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F5F3EF;--surface:#FFFFFF;--surface2:#F0EDE8;--surface3:#E8E4DD;
+  --border:#D8D3CB;--border2:#C8C2B8;
+  --text:#1A1814;--text2:#5A5448;--text3:#8A8278;
+  --accent:#2C5F2E;--accent-light:#E8F0E8;--accent-text:#1A3D1C;
+  --danger:#8B2635;--danger-light:#F5E8EA;--danger-text:#6B1825;
+  --warn:#7A5C1E;--warn-light:#F5F0E0;--warn-text:#5A4010;
+  --info:#1A3D6E;--info-light:#E8EFF8;--info-text:#0E2545;
+  --radius:10px;--radius-lg:16px;--radius-sm:6px;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06);
+  --shadow-lg:0 4px 24px rgba(0,0,0,.12);
+  --font:'DM Sans',sans-serif;--mono:'DM Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;min-height:100vh}
+h2{font-size:18px;font-weight:500}h3{font-size:15px;font-weight:500}
+
+/* LOADING */
+#loading-screen,#setup-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg);flex-direction:column;gap:16px}
+.spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.setup-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:2rem;max-width:600px;width:95vw;box-shadow:var(--shadow-lg)}
+.setup-box h2{margin-bottom:8px;color:var(--accent)}
+.setup-box p{font-size:13px;color:var(--text2);margin-bottom:1rem;line-height:1.6}
+.step{display:flex;gap:12px;margin-bottom:1rem;padding:12px;background:var(--surface2);border-radius:var(--radius-sm)}
+.step-num{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-text{font-size:13px;line-height:1.6;color:var(--text)}
+.step-text code{background:var(--surface3);padding:1px 5px;border-radius:3px;font-family:var(--mono);font-size:12px}
+.setup-err{background:var(--danger-light);color:var(--danger-text);padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;margin-bottom:1rem;display:none}
+#setup-error:not(:empty){display:block}
+
+/* LOGIN */
+#login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg)}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:2.5rem;width:360px;box-shadow:var(--shadow-lg)}
+.login-logo{font-size:13px;font-weight:600;color:var(--accent);letter-spacing:.12em;text-transform:uppercase;margin-bottom:2rem;display:flex;align-items:center;gap:8px}
+.login-logo svg{width:28px;height:28px}
+.login-box h2{font-size:20px;font-weight:600;margin-bottom:6px}
+.login-box p{color:var(--text2);font-size:13px;margin-bottom:1.75rem}
+.field{margin-bottom:1rem}
+.field label{display:block;font-size:12px;font-weight:500;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
+.field input,.field select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-family:var(--font);font-size:14px}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent)}
+.login-err{background:var(--danger-light);color:var(--danger-text);border:1px solid #D9A0A8;border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;margin-bottom:1rem;display:none}
+.online-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--accent);background:var(--accent-light);padding:5px 10px;border-radius:999px;margin-bottom:1.5rem}
+.online-dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+
+/* APP */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border:1px solid var(--border2);border-radius:var(--radius-sm);background:transparent;color:var(--text);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn:hover{background:var(--surface2)}.btn:active{transform:scale(.98)}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}.btn-primary:hover{background:#245026}
+.btn-danger{background:var(--danger-light);color:var(--danger-text);border-color:#D9A0A8}
+.btn-warn{background:var(--warn-light);color:var(--warn-text);border-color:#D4C090}
+.btn-sm{padding:6px 11px;font-size:12px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+#app{display:none;min-height:100vh;flex-direction:column}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 1.5rem;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.topbar-logo{font-size:13px;font-weight:600;color:var(--accent);letter-spacing:.1em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.user-badge{font-size:12px;color:var(--text2);background:var(--surface2);padding:5px 10px;border-radius:999px;border:1px solid var(--border)}
+.layout{display:flex;flex:1}
+.sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);padding:1rem 0;flex-shrink:0;height:calc(100vh - 56px);overflow-y:auto;position:sticky;top:56px}
+.sidebar-section{padding:0 12px;margin-bottom:1.5rem}
+.sidebar-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);padding:0 8px;margin-bottom:6px}
+.nav-item{display:flex;align-items:center;gap:8px;padding:8px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;color:var(--text2);transition:all .12s;border:none;background:none;width:100%;text-align:left}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:var(--accent-light);color:var(--accent-text);font-weight:500}
+.nav-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.main{flex:1;padding:1.5rem;overflow-y:auto;max-width:1100px}
+.page{display:none}.page.active{display:block}
+.page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:10px}
+.page-title{font-size:20px;font-weight:600}.page-sub{font-size:13px;color:var(--text2);margin-top:2px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:1.5rem}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.1rem}
+.metric-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.metric-val{font-size:26px;font-weight:600;line-height:1}
+.metric-val.green{color:var(--accent)}.metric-val.red{color:var(--danger)}.metric-val.amber{color:var(--warn)}.metric-val.blue{color:var(--info)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.1rem 1.25rem;margin-bottom:1rem}
+.card-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:1rem}
+.tbl-wrap{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{padding:9px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);border-bottom:1px solid var(--border);background:var(--surface2);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--surface2)}
+.on-site td{background:#FFFBF0}.on-site:hover td{background:#FFF5D8}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:999px}
+.badge-green{background:#E0F0E0;color:#1A5C1A}.badge-red{background:#F5E0E3;color:#8B1A2A}
+.badge-amber{background:#F5EED8;color:#7A5018}.badge-gray{background:var(--surface3);color:var(--text3)}
+.badge-blue{background:#E0EAF8;color:#1A3D6E}
+input[type=text],input[type=number],input[type=password],select,textarea{width:100%;padding:8px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-family:var(--font);font-size:13px;transition:border .15s}
+input:focus,select:focus{outline:none;border-color:var(--accent)}
+label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:4px}
+.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:200;align-items:center;justify-content:center}
+.modal-backdrop.open{display:flex}
+.modal{background:var(--surface);border-radius:var(--radius-lg);padding:1.75rem;width:480px;max-width:95vw;box-shadow:var(--shadow-lg);border:1px solid var(--border)}
+.modal h3{margin-bottom:4px}.modal p{font-size:13px;color:var(--text2);margin-bottom:1.5rem}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem}
+.alert{padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;margin-bottom:1rem;border:1px solid transparent}
+.alert-warn{background:var(--warn-light);color:var(--warn-text);border-color:#D4C090}
+.alert-green{background:var(--accent-light);color:var(--accent-text);border-color:#A8C8A8}
+.pohyb-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.pohyb-row:last-child{border-bottom:none}
+.pohyb-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pohyb-vydaj{background:var(--warn-light)}.pohyb-vrat{background:var(--accent-light)}
+.pohyb-pridanie{background:var(--info-light)}.pohyb-uprava{background:var(--surface3)}.pohyb-vymazanie{background:var(--danger-light)}
+.pohyb-info{flex:1;min-width:0}
+.pohyb-main{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pohyb-sub{font-size:12px;color:var(--text3)}
+.pohyb-qty{font-family:var(--mono);font-size:13px;font-weight:500;white-space:nowrap}
+.pohyb-time{font-size:11px;color:var(--text3);white-space:nowrap}
+.user-list{display:flex;flex-direction:column;gap:8px}
+.user-item{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);gap:10px;flex-wrap:wrap}
+.user-avatar{width:34px;height:34px;border-radius:50%;background:var(--accent-light);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--accent-text);flex-shrink:0}
+.user-info{flex:1;min-width:0}.user-name{font-size:13px;font-weight:500}.user-role{font-size:11px;color:var(--text3)}
+.role-admin{color:var(--accent-text);background:var(--accent-light);padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500}
+.role-stavby{color:var(--info-text);background:var(--info-light);padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500}
+.role-skladnik{color:#5A2D8B;background:#EDE8F8;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500}
+.empty{text-align:center;padding:3rem 1rem;color:var(--text3)}
+#toast{position:fixed;bottom:24px;right:24px;background:var(--text);color:#fff;padding:10px 18px;border-radius:var(--radius);font-size:13px;font-weight:500;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;z-index:999}
+#toast.show{opacity:1;transform:translateY(0)}
+svg.icon{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-2px;flex-shrink:0}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:99px}
+@media(max-width:600px){.sidebar{width:60px}.nav-item span:not(.nav-dot){display:none}.sidebar-label{display:none}.main{padding:.75rem}}
+
+/* ── HESLO – OKO ── */
+.pass-input-wrap{position:relative;display:flex;align-items:center;}
+.pass-input-wrap input{padding-right:36px;}
+.pass-eye-btn{position:absolute;right:8px;background:none;border:none;cursor:pointer;padding:2px;color:var(--text3);display:flex;align-items:center;transition:color .15s;flex-shrink:0;}
+.pass-eye-btn:hover{color:var(--accent);}
+.pass-eye-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+.user-pass-row{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;color:var(--text3);}
+.user-pass-label{font-weight:500;}
+.user-pass-dots{letter-spacing:2px;font-size:11px;}
+.user-pass-text{font-family:var(--mono);font-size:12px;color:var(--text);background:var(--surface2);padding:1px 7px;border-radius:4px;border:1px solid var(--border);}
+.user-pass-row .pass-eye-btn{position:static;color:var(--text3);}
+.user-pass-row .pass-eye-btn:hover{color:var(--accent);}
+
+/* ── NÁRADIE SEARCH ── */
+.ns-wrap{position:relative;margin-bottom:6px;}
+.ns-input{width:100%;padding:8px 11px 8px 34px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238A8278' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='M21 21l-4.35-4.35'/%3E%3C/svg%3E") no-repeat 10px center;color:var(--text);font-family:var(--font);font-size:13px;transition:border .15s;}
+.ns-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(44,95,46,.10);}
+.ns-input::placeholder{color:var(--text3);}
+.ns-drop{display:none;position:absolute;top:calc(100% + 3px);left:0;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);z-index:150;max-height:220px;overflow-y:auto;}
+.ns-item{padding:8px 12px;font-size:13px;cursor:pointer;color:var(--text);border-bottom:1px solid var(--border);transition:background .1s;line-height:1.4;}
+.ns-item:last-child{border-bottom:none;}
+.ns-item:hover,.ns-item.ns-active{background:var(--accent-light);color:var(--accent-text);}
+.ns-empty{color:var(--text3);cursor:default;font-style:italic;}
+.ns-empty:hover{background:transparent;color:var(--text3);}
+
+/* ── NARADIA DETAIL PANEL ── */
+#naradia-detail-panel{transform:translateX(110%);}
+#naradia-detail-panel.open{transform:translateX(0);}
+#naradia-img-tip{pointer-events:none;}
+</style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading-screen" style="display:flex">
+  <div class="spinner"></div>
+  <p id="loading-msg" style="color:var(--text2);font-size:14px">Pripájanie k databáze…</p>
+</div>
+
+<!-- SETUP -->
+<div id="setup-screen" style="display:none">
+  <div class="setup-box">
+    <h2>⚙️ Nastavenie Firebase</h2>
+    <p>Aplikácia potrebuje Firebase databázu pre zdieľanie dát v reálnom čase. Postupujte podľa krokov nižšie:</p>
+    <div id="setup-error" class="setup-err"></div>
+    <div class="step"><div class="step-num">1</div><div class="step-text">Choďte na <strong>console.firebase.google.com</strong> → Vytvoriť projekt (zadarmo, Google účet stačí)</div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-text">V projekte kliknite <strong>Realtime Database</strong> → Vytvoriť databázu → vybrať región <code>europe-west1</code> → Testovací režim (30 dní) alebo nastaviť pravidlá</div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-text">Choďte na <strong>Nastavenia projektu → Vaše aplikácie → Pridať webovú aplikáciu</strong> → skopírujte <code>firebaseConfig</code> objekt</div></div>
+    <div class="step"><div class="step-num">4</div><div class="step-text">Otvorte súbor <code>register_naradia.html</code> v textovom editore (napr. Notepad++) → nájdite sekciu <code>🔧 FIREBASE KONFIGURÁCIA</code> → vložte vaše hodnoty (apiKey, databaseURL, projectId…)</div></div>
+    <div class="step"><div class="step-num">5</div><div class="step-text">Uložte súbor a otvorte ho znova v prehliadači. Dáta sa automaticky nahrajú a zdieľajú s celým tímom cez odkaz alebo QR kód.</div></div>
+    <p style="margin-top:1rem;font-size:12px;color:var(--text3)">Pre pomoc s nastavením Firebase napíšte správu v chate.</p>
+  </div>
+</div>
+
+<!-- LOGIN -->
+<div id="login-screen" style="display:none">
+  <div class="login-box">
+    <div class="login-logo">
+      <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="7" fill="#2C5F2E"/><path d="M7 14h14M14 7v14" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>
+      Register náradia
+    </div>
+    <div class="online-badge"><span class="online-dot"></span> Online – zdieľané dáta</div>
+    <form id="login-form" autocomplete="on" onsubmit="event.preventDefault();doLogin();" style="display:contents">
+    <h2>Prihlásenie</h2>
+    <p>Zadajte prihlasovacie údaje</p>
+    <div id="login-err" class="login-err">Nesprávne meno alebo heslo</div>
+    <div class="field"><label>Prihlasovacie meno</label><input type="text" id="l-user" name="username" placeholder="napr. admin" autocomplete="username"></div>
+    <div class="field"><label>Heslo</label>
+      <div class="pass-input-wrap">
+        <input type="password" id="l-pass" name="password" placeholder="heslo" autocomplete="current-password">
+        <button type="button" class="pass-eye-btn" onclick="toggleInputPass('l-pass','l-pass-eye-icon')" tabindex="-1">
+          <svg id="l-pass-eye-icon" class="icon" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="field"><label>Stavba (voliteľné)</label><select id="l-stavba"><option value="">— Všetky stavby —</option></select></div>
+    <button class="btn btn-primary" id="login-btn" style="width:100%;margin-top:4px;justify-content:center">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+      Prihlásiť sa
+    </button>
+    <p style="font-size:11px;color:var(--text3);text-align:center;margin-top:1rem">Prvé prihlásenie: admin / admin123</p>
+    </form>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="topbar">
+    <div class="topbar-logo">
+      <img id="company-logo" src="" alt="" style="height:32px;display:none;object-fit:contain">
+      <svg id="default-logo" viewBox="0 0 22 22" fill="none" style="width:22px;height:22px"><rect width="22" height="22" rx="5" fill="#2C5F2E"/><path d="M5 11h12M11 5v12" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Register náradia</span>
+    </div>
+    <div class="topbar-right">
+      <span id="topbar-online"></span>
+      <span class="user-badge" id="topbar-user">—</span>
+      <button class="btn btn-sm" id="logout-btn">Odhlásiť</button>
+    </div>
+  </div>
+  <div class="layout">
+    <div class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Prehľad</div>
+        <button class="nav-item" data-nav="sklad" onclick="nav('sklad')">
+          <svg class="icon" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+          <span>Sklad</span>
+        </button>
+        <button class="nav-item" data-nav="pohyby" onclick="nav('pohyby')">
+          <svg class="icon" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <span>Pohyby</span>
+        </button>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Stavby</div>
+        <div id="sidebar-stavby"></div>
+      </div>
+      <div class="sidebar-section" id="admin-section">
+        <div class="sidebar-label">Administrácia</div>
+        <label class="nav-item" id="admin-logo-btn" style="cursor:pointer" title="Nahrať logo firmy">
+          <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <span>Logo firmy</span>
+          <input type="file" accept="image/*" style="display:none" onchange="uploadLogo(event)">
+        </label>
+        <button class="nav-item" id="admin-naradia-btn" onclick="nav('naradia-mgmt')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          <span>Náradie</span>
+        </button>
+        <button class="nav-item" id="admin-stavby-btn" onclick="nav('stavby-mgmt')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          <span>Stavby</span>
+        </button>
+        <button class="nav-item" id="admin-users-btn" onclick="nav('pouzivatelia')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>Používatelia</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="main">
+      <!-- SKLAD -->
+      <div class="page" id="page-sklad">
+        <div class="page-header">
+          <div><div class="page-title">Centrálny sklad</div><div class="page-sub">Aktuálny stav – aktualizuje sa v reálnom čase</div></div>
+          <div class="actions">
+            <button class="btn btn-sm" onclick="exportSkladExcel()">⬇ Excel</button>
+            <button class="btn btn-sm" onclick="exportSkladPDF()">⬇ PDF</button>
+          </div>
+        </div>
+        <!-- Info lišta – priečinok fotografií (viditeľná pre všetkých) -->
+        <div id="ls-info-bar-sklad" style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--info-light);border:1px solid #C0CFDF;border-radius:var(--radius);margin-bottom:1rem;font-size:12px;flex-wrap:wrap">
+          <span style="flex:1;color:var(--info-text)">
+            📁 <strong>Fotografie náradia:</strong> Vyberte priečinok pre zobrazenie náhľadov pri výdaji a vrátení.
+          </span>
+          <button class="btn btn-sm btn-primary" onclick="pickImgFolder()">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Vybrať priečinok
+          </button>
+        </div>
+        <div class="metrics" id="sklad-metrics"></div>
+        <div id="sklad-forms-admin" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
+          <!-- VYDAJ ZO SKLADU -->
+          <div class="card">
+            <div class="card-title">Vydať zo skladu na stavbu</div>
+            <div style="margin-bottom:8px">
+              <label>Vyhľadať náradie</label>
+              <div class="ns-wrap">
+                <input type="text" id="sk-v-n-search" class="ns-input" placeholder="Zadajte názov náradia…" autocomplete="off">
+                <div class="ns-drop" id="sk-v-n-drop"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+                <div id="sk-v-img" style="display:none;flex-shrink:0"></div>
+                <div style="flex:1">
+                  <label>Náradie</label>
+                  <select id="sk-v-n" onchange="updateSkladImg('sk-v-img',this.value)"></select>
+                </div>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+              <div><label>Stavba</label><select id="sk-v-s" onchange="refreshVydajObjekt(this.value)"></select></div>
+              <div><label>Množstvo</label><input type="number" id="sk-v-q" min="1" value="1"></div>
+            </div>
+            <div id="sk-v-obj-wrap" style="margin-bottom:8px;display:none">
+              <label>Objekt stavby</label>
+              <select id="sk-v-o-obj"></select>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+              <div><label>Zodpovedná osoba</label><input type="text" id="sk-v-o" placeholder="Meno"></div>
+              <div><label>Poznámka</label><input type="text" id="sk-v-p" placeholder="Voliteľná"></div>
+            </div>
+            <button class="btn btn-warn" style="width:100%;justify-content:center" onclick="vydajZoSkladu()">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg> Vydať zo skladu
+            </button>
+          </div>
+          <!-- VRÁTIŤ DO SKLADU -->
+          <div class="card">
+            <div class="card-title">Vrátiť do skladu zo stavby</div>
+            <div style="margin-bottom:8px">
+              <label>Vyhľadať náradie</label>
+              <div class="ns-wrap">
+                <input type="text" id="sk-r-n-search" class="ns-input" placeholder="Zadajte názov náradia…" autocomplete="off">
+                <div class="ns-drop" id="sk-r-n-drop"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+                <div id="sk-r-img" style="display:none;flex-shrink:0"></div>
+                <div style="flex:1">
+                  <label>Náradie</label>
+                  <select id="sk-r-n" onchange="refreshReturnQty();updateSkladImg('sk-r-img',this.value)"></select>
+                </div>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+              <div><label>Stavba (len kde je náradie)</label><select id="sk-r-s" onchange="refreshReturnQty()"></select></div>
+              <div><label>Množstvo</label><input type="number" id="sk-r-q" min="1" value="1"></div>
+            </div>
+            <div id="sk-r-obj-wrap" style="margin-bottom:8px;display:none">
+              <label>Objekt stavby</label>
+              <select id="sk-r-o-obj"></select>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+              <div><label>Stav náradia</label><select id="sk-r-stav"><option>Dobrý</option><option>Poškodený</option><option>Chýba</option><option>Skontrolovať</option></select></div>
+              <div><label>Poznámka</label><input type="text" id="sk-r-p" placeholder="Voliteľná"></div>
+            </div>
+            <div id="sk-r-info" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>
+            <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="vratDoSkladu()">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg> Vrátiť do skladu
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Stav náradia</div>
+          <div class="tbl-wrap"><table id="sklad-table"><thead><tr><th style="text-align:center">Č.</th><th>Náradie / príslušenstvo</th><th>Jedn.</th><th>Celkom</th><th>V sklade</th><th>Na stavbách</th><th>Stav</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- STAVBA DETAIL -->
+      <div class="page" id="page-stavba">
+        <div class="page-header">
+          <div><div class="page-title" id="stavba-page-title">Stavba</div><div class="page-sub" id="stavba-page-sub"></div></div>
+          <div class="actions">
+            <button class="btn btn-sm" onclick="exportStavbaExcel()">⬇ Excel</button>
+            <button class="btn btn-sm" onclick="exportStavbaPDF()">⬇ PDF</button>
+          </div>
+        </div>
+        <div id="stavba-alert"></div>
+        <div class="metrics" id="stavba-metrics"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem" id="stavba-forms"></div>
+        <div class="card">
+          <div class="card-title">Náradie evidované na stavbe</div>
+          <div class="tbl-wrap"><table id="stavba-table"><thead><tr><th style="text-align:center">Č.</th><th>Náradie</th><th>Jedn.</th><th>Na stavbe</th><th>Výdaje / Vrátenia</th><th>Stav</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- POHYBY -->
+      <div class="page" id="page-pohyby">
+        <div class="page-header">
+          <div><div class="page-title">História pohybov</div><div class="page-sub">Všetky výdaje a vrátenia – reálny čas</div></div>
+          <div class="actions">
+            <button class="btn btn-sm" onclick="exportPohybyExcel()">⬇ Excel</button>
+            <button class="btn btn-sm" onclick="exportPohybyPDF()">⬇ PDF</button>
+            <select id="filter-stavba-pohyby" style="width:auto;padding:6px 10px;font-size:12px" onchange="renderPohyby()"><option value="">Všetky stavby</option></select>
+            <select id="filter-typ-pohyby" style="width:auto;padding:6px 10px;font-size:12px" onchange="renderPohyby()"><option value="">Všetky typy</option><option value="vydaj">Výdaj na stavbu</option><option value="vratenie">Vrátenie zo stavby</option><option value="pridanie">Pridanie náradia</option><option value="navysenie">Navýšenie počtu</option><option value="uprava">Úprava náradia</option><option value="vymazanie">Vymazanie náradia</option></select>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <label style="font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0;margin:0">Od:</label>
+              <input type="date" id="filter-datum-od" style="width:auto;padding:5px 8px;font-size:12px;font-family:var(--font);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)" onchange="renderPohyby()">
+              <label style="font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0;margin:0">Do:</label>
+              <input type="date" id="filter-datum-do" style="width:auto;padding:5px 8px;font-size:12px;font-family:var(--font);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)" onchange="renderPohyby()">
+              <button type="button" id="btn-clear-filters" style="cursor:pointer;padding:5px 14px;background:#FCEBEB;color:#8B2635;border:1.5px solid #D9A0A8;border-radius:6px;font-family:var(--font);font-size:12px;font-weight:600">✕ Zrušiť filtre</button>
+            </div>
+          </div>
+        </div>
+        <div id="pohyby-filter-info" style="font-size:12px;color:var(--accent);margin-bottom:8px;font-weight:500"></div>
+        <div class="card"><div id="pohyby-list"></div></div>
+      </div>
+
+      <!-- NARADIA MGMT -->
+      <div class="page" id="page-naradia-mgmt">
+        <div class="page-header">
+          <div><div class="page-title">Správa náradia</div><div class="page-sub" id="naradia-mgmt-sub">Pridávanie a úprava náradia</div></div>
+          <div class="actions" id="naradia-mgmt-actions">
+            <button class="btn btn-sm" onclick="printInventura()" title="Vytlačiť inventúrny doklad skladu">
+              <svg class="icon" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Inventúra
+            </button>
+            <button class="btn btn-sm" onclick="downloadImportTemplate()" title="Stiahnuť vzorový Excel súbor">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Šablóna Excel
+            </button>
+            <label class="btn btn-sm" style="cursor:pointer" title="Importovať náradie z Excel súboru">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Import z Excelu
+              <input type="file" accept=".xlsx,.xls,.ods" style="display:none" onchange="handleImportFile(event)">
+            </label>
+            <button class="btn btn-primary" onclick="document.getElementById('edit-naradia-id').value='';openModal('modal-add-naradia')">+ Pridať náradie</button>
+          </div>
+        </div>
+        <!-- Info lišta – priečinok fotografií -->
+        <div id="ls-info-bar" style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--info-light);border:1px solid #C0CFDF;border-radius:var(--radius);margin-bottom:1rem;font-size:12px;flex-wrap:wrap">
+          <span style="flex:1;color:var(--info-text)">
+            📁 <strong>Priečinok fotografií nie je nastavený.</strong>
+            &nbsp; Vyberte priečinok kde máte uložené fotografie pomenované podľa čísla karty (napr. <code style="background:rgba(255,255,255,.6);padding:1px 5px;border-radius:3px">5.jpg</code>, <code style="background:rgba(255,255,255,.6);padding:1px 5px;border-radius:3px">12.png</code>).
+          </span>
+          <button class="btn btn-sm btn-primary" onclick="pickImgFolder()">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Vybrať priečinok
+          </button>
+        </div>
+        <div class="card">
+          <!-- Vyhľadávanie -->
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+            <div class="ns-wrap" style="flex:1;min-width:200px;margin-bottom:0">
+              <input type="text" id="naradia-mgmt-search" class="ns-input"
+                placeholder="Hľadať podľa názvu, č. karty, modelu, S/N, kategórie…"
+                autocomplete="off" oninput="filterNaradiaMgmt()">
+              <div class="ns-drop" id="naradia-mgmt-search-drop"></div>
+            </div>
+            <button class="btn btn-sm" onclick="document.getElementById('naradia-mgmt-search').value='';filterNaradiaMgmt()" title="Zrušiť filter" id="naradia-mgmt-search-clear" style="display:none">
+              ✕ Zrušiť
+            </button>
+            <span id="naradia-mgmt-search-count" style="font-size:12px;color:var(--text3);white-space:nowrap"></span>
+          </div>
+          <div class="tbl-wrap"><table id="naradia-mgmt-table"><thead><tr><th style="text-align:center">Č.</th><th>Názov</th><th>Model / typ</th><th>S/N</th><th>Jedn.</th><th>Celkom</th><th>Na stavbách</th><th>Akcie</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- STAVBY MGMT -->
+      <div class="page" id="page-stavby-mgmt">
+        <div class="page-header">
+          <div><div class="page-title">Správa stavieb</div><div class="page-sub">Pridávanie a úprava stavieb</div></div>
+          <button class="btn btn-primary" id="stavby-add-btn" onclick="document.getElementById('edit-stavba-id').value='';openModal('modal-add-stavba')">+ Pridať stavbu</button>
+        </div>
+        <div class="user-list" id="stavby-list-mgmt"></div>
+      </div>
+
+      <!-- POUZIVATELIA -->
+      <div class="page" id="page-pouzivatelia">
+        <div class="page-header">
+          <div><div class="page-title">Správa používateľov</div><div class="page-sub">Prístupy pre celý tím</div></div>
+          <button class="btn btn-primary" id="users-add-btn" onclick="document.getElementById('edit-user-id').value='';openModal('modal-add-user')">+ Pridať používateľa</button>
+        </div>
+        <div class="user-list" id="user-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-backdrop" id="modal-add-naradia">
+  <div class="modal">
+    <h3>Pridať / upraviť náradie</h3><p>Zadajte detaily náradia</p>
+    <input type="hidden" id="edit-naradia-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div>
+        <label>Názov náradia</label>
+        <div class="ns-wrap" style="margin-bottom:0">
+          <input type="text" id="n-name" class="ns-input" placeholder="napr. Vŕtačka" autocomplete="off">
+          <div class="ns-drop" id="n-name-drop"></div>
+        </div>
+      </div>
+      <div><label>Jednotka</label><select id="n-unit"><option>ks</option><option>m</option><option>m²</option><option>kg</option><option>bal</option></select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Model / typ</label><input type="text" id="n-model" placeholder="napr. GBH 2-26 DRE"></div>
+      <div><label>Výrobné číslo (S/N)</label><input type="text" id="n-sn" placeholder="napr. SN-2024-001"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Celkový počet</label><input type="number" id="n-total" min="0" value="1"></div>
+      <div><label>Kategória</label><select id="n-kat"><option>Elektrické náradie</option><option>Ručné náradie</option><option>Meracie prístroje</option><option>Ochranné pomôcky</option><option>Lešenie a rebríky</option><option>Mechanizácia / Stroje</option><option>Kancelárske vybavenie</option><option>Iné</option></select></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Poznámka / popis</label><input type="text" id="n-pozn" placeholder="napr. Záručný list v šuplíku A3"></div>
+    <!-- Foto náradia -->
+    <div style="margin-bottom:14px">
+      <label>Fotografia náradia</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div id="n-img-preview" style="width:64px;height:64px;border-radius:8px;border:1.5px dashed var(--border2);overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--surface2);flex-shrink:0;cursor:pointer" onclick="document.getElementById('n-img-input').click()">
+          <svg style="width:22px;height:22px;stroke:var(--text3);fill:none;stroke-width:1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </div>
+        <div style="flex:1">
+          <input type="file" id="n-img-input" accept="image/*" style="display:none" onchange="handleModalImgUpload(this)">
+          <button type="button" class="btn btn-sm" onclick="document.getElementById('n-img-input').click()">
+            <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Nahrať foto
+          </button>
+          <button type="button" class="btn btn-sm btn-danger" id="n-img-remove-btn" style="display:none;margin-left:4px" onclick="removeModalImg()">🗑 Odstrániť</button>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">JPG, PNG, WEBP – max 3 MB. Foto sa uloží lokálne v prehliadači.</div>
+        </div>
+      </div>
+    </div>
+    <!-- Denník / história náradia -->
+    <div style="margin-bottom:14px">
+      <label>Denník náradia</label>
+      <textarea id="n-dennik" rows="4" placeholder="napr.&#10;12.5.2024 – Nákup, dodávateľ Bosch SK&#10;3.9.2024 – Oprava motora, servis Makita Bratislava&#10;15.1.2025 – Ročná revízia OK" style="width:100%;padding:8px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-family:var(--font);font-size:13px;resize:vertical;line-height:1.5"></textarea>
+      <div style="font-size:11px;color:var(--text3);margin-top:3px">História nákupov, opráv, revízií a ďalších udalostí</div>
+    </div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal('modal-add-naradia')">Zrušiť</button><button class="btn btn-primary" onclick="saveNaradia()">Uložiť</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-add-stavba">
+  <div class="modal">
+    <h3>Pridať / upraviť stavbu</h3><p>Základné informácie o stavbe</p>
+    <input type="hidden" id="edit-stavba-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Názov stavby</label><input type="text" id="s-name" placeholder="napr. Bytovka Bratislava"></div>
+      <div><label>Kód stavby</label><input type="text" id="s-kod" placeholder="napr. BA-2025"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Adresa / popis</label><input type="text" id="s-adresa" placeholder="napr. Ul. Hlavná 12, Bratislava"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Stavbyvedúci</label><select id="s-vedouci"><option value="">— Vybrať —</option></select></div>
+      <div><label>Stav</label><select id="s-stav"><option>Aktívna</option><option>Pozastavená</option><option>Dokončená</option></select></div>
+    </div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal('modal-add-stavba')">Zrušiť</button><button class="btn btn-primary" onclick="saveStavba()">Uložiť</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-add-user">
+  <div class="modal">
+    <h3>Pridať / upraviť používateľa</h3><p>Prihlasovacie údaje a pridelená stavba</p>
+    <input type="hidden" id="edit-user-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Meno a priezvisko</label><input type="text" id="u-name" placeholder="napr. Ján Novák"></div>
+      <div><label>Prihlasovacie meno</label><input type="text" id="u-login" placeholder="napr. jnovak"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label>Heslo</label>
+        <div class="pass-input-wrap">
+          <input type="password" id="u-pass" placeholder="heslo" autocomplete="new-password">
+          <button type="button" class="pass-eye-btn" onclick="toggleInputPass('u-pass','u-pass-eye-icon')" tabindex="-1">
+            <svg id="u-pass-eye-icon" class="icon" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div><label>Rola</label><select id="u-role" onchange="toggleStavbaField()"><option value="admin">Administrátor</option><option value="skladnik">Skladník</option><option value="stavby">Stavbyvedúci</option></select></div>
+    </div>
+    <div id="u-stavba-field" style="margin-bottom:14px">
+      <label>Pridelené stavby (môžete vybrať viac)</label>
+      <div id="u-stavby-checkboxes" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;max-height:150px;overflow-y:auto;background:var(--surface)"></div>
+    </div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal('modal-add-user')">Zrušiť</button><button class="btn btn-primary" onclick="saveUser()">Uložiť</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-add-objekt">
+  <div class="modal" style="width:400px">
+    <h3 id="modal-add-objekt-title">Pridať objekt</h3>
+    <p>Objekt stavby (napr. Blok A, Pivnica, Strecha…)</p>
+    <input type="hidden" id="edit-objekt-stavba-id">
+    <input type="hidden" id="edit-objekt-id">
+    <div style="margin-bottom:10px">
+      <label>Názov objektu</label>
+      <input type="text" id="o-name" placeholder="napr. Blok A, Pivnica, 2. nadzemné podlažie">
+    </div>
+    <div style="margin-bottom:14px">
+      <label>Stav</label>
+      <select id="o-stav">
+        <option value="Aktívny">Aktívny</option>
+        <option value="Pozastavený">Pozastavený</option>
+        <option value="Dokončený">Dokončený</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('modal-add-objekt')">Zrušiť</button>
+      <button class="btn btn-primary" onclick="saveObjekt()">Uložiť</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-confirm">
+  <div class="modal">
+    <h3 id="confirm-title">Potvrdiť akciu</h3><p id="confirm-msg"></p>
+    <div class="modal-actions"><button class="btn" onclick="closeModal('modal-confirm')">Zrušiť</button><button class="btn btn-danger" id="confirm-ok-btn">Potvrdiť</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-import">
+  <div class="modal" style="width:700px;max-width:98vw">
+    <h3>Import náradia z Excelu</h3>
+    <p>Skontrolujte zoznam pred importom. Duplicity môžete preskočiť, aktualizovať počet alebo prepísať celú položku.</p>
+    <div id="import-preview-body" style="max-height:55vh;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('modal-import')">Zrušiť</button>
+      <button class="btn btn-primary" id="import-confirm-btn" onclick="confirmImport()">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Importovať
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-naradia-match">
+  <div class="modal" style="width:560px;max-width:96vw">
+    <h3>⚠️ Náradie s týmto názvom už existuje</h3>
+    <p>Vyberte čo chcete urobiť – navýšiť existujúce alebo pridať ako nové</p>
+    <div id="naradia-match-body" style="max-height:60vh;overflow-y:auto"></div>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-naradia-match')">Zrušiť</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- ══ DETAIL PANEL NÁRADIA (slide-in sprava) ══════════════════ -->
+<div id="naradia-detail-panel" style="
+  position:fixed;top:0;right:0;bottom:0;width:480px;max-width:100vw;
+  background:var(--surface);border-left:1px solid var(--border);
+  box-shadow:-4px 0 32px rgba(0,0,0,.14);
+  z-index:300;transition:transform .28s cubic-bezier(.4,0,.2,1);
+  display:flex;flex-direction:column;overflow:hidden">
+  <!-- Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="btn btn-sm" onclick="closeNaradiaDetail()" title="Späť na správu náradia" style="gap:5px">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg> Späť
+      </button>
+      <div>
+        <div style="font-size:15px;font-weight:600" id="naradia-detail-title">Detail</div>
+        <div style="font-size:11px;color:var(--text3)">Správa náradia</div>
+      </div>
+    </div>
+    <button onclick="closeNaradiaDetail()" style="background:none;border:none;cursor:pointer;color:var(--text3);padding:4px;border-radius:6px;display:flex;align-items:center" title="Zavrieť">
+      <svg style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <!-- Scrollable body -->
+  <div id="naradia-detail-body" style="flex:1;overflow-y:auto;padding:1.25rem"></div>
+</div>
+<!-- Overlay pre zatvorenie panela klikom mimo -->
+<div id="naradia-detail-overlay" onclick="closeNaradiaDetail()" style="
+  display:none;position:fixed;inset:0;z-index:299;background:rgba(0,0,0,.18)"></div>
+
+<!-- Tlačidlo HORE -->
+<button id="scroll-top-btn" onclick="document.querySelector('.main-content').scrollTo({top:0,behavior:'smooth'})"
+  style="display:none;position:fixed;bottom:24px;right:24px;z-index:500;width:42px;height:42px;border-radius:50%;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:20px;box-shadow:0 3px 10px rgba(0,0,0,.25);align-items:center;justify-content:center;transition:opacity .2s"
+  title="Späť hore">↑</button>
+
+<script>
+(function(){
+  var btn = document.getElementById('scroll-top-btn');
+  var main;
+  document.addEventListener('DOMContentLoaded', function(){
+    main = document.querySelector('.main-content');
+    if(!main) return;
+    main.addEventListener('scroll', function(){
+      btn.style.display = main.scrollTop > 300 ? 'flex' : 'none';
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
