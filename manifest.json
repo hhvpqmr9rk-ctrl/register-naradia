@@ -1,0 +1,26 @@
+{
+  "name": "Register náradia – Kango",
+  "short_name": "Náradie",
+  "description": "Evidencia a správa náradia Kango spol. s r.o.",
+  "start_url": "/register-naradia/",
+  "scope": "/register-naradia/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f5f5f0",
+  "theme_color": "#2C5F2E",
+  "lang": "sk",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
