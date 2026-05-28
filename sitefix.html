@@ -1,0 +1,1160 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SiteFix – Správa nedorobkov</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0f1117;
+  --bg2: #181c27;
+  --bg3: #1e2333;
+  --border: #2a3045;
+  --accent: #f5a623;
+  --accent2: #e8832a;
+  --red: #e05252;
+  --green: #4caf82;
+  --blue: #5b9cf6;
+  --yellow: #f5c842;
+  --text: #e8eaf0;
+  --text2: #9aa3b8;
+  --text3: #5a6382;
+  --font: 'IBM Plex Sans', sans-serif;
+  --mono: 'IBM Plex Mono', monospace;
+  --radius: 8px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+
+/* HEADER */
+#header {
+  height: 52px; min-height: 52px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 16px; gap: 12px;
+  z-index: 100;
+}
+#header .logo { font-weight: 600; font-size: 15px; color: var(--accent); letter-spacing: .5px; white-space: nowrap; }
+#header .logo span { color: var(--text2); font-weight: 300; }
+#header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+#userLabel { font-size: 12px; color: var(--text2); }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border: none; border-radius: var(--radius); font-family: var(--font); font-size: 13px; font-weight: 500; cursor: pointer; transition: .15s; }
+.btn-primary { background: var(--accent); color: #000; }
+.btn-primary:hover { background: var(--accent2); }
+.btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+.btn-ghost:hover { background: var(--bg3); color: var(--text); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-danger { background: var(--red); color: #fff; }
+
+/* LAYOUT */
+#layout { flex: 1; display: flex; overflow: hidden; }
+
+/* SIDEBAR */
+#sidebar {
+  width: 220px; min-width: 220px;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+#sidebar-header { padding: 12px 14px 8px; font-size: 11px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; }
+#filter-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+.filter-item {
+  padding: 7px 10px; border-radius: 6px; cursor: pointer;
+  font-size: 13px; color: var(--text2);
+  display: flex; align-items: center; gap: 8px;
+  transition: .12s; margin-bottom: 2px;
+}
+.filter-item:hover { background: var(--bg3); color: var(--text); }
+.filter-item.active { background: rgba(245,166,35,.12); color: var(--accent); }
+.filter-item .count {
+  margin-left: auto; font-size: 11px; font-family: var(--mono);
+  background: var(--bg3); border-radius: 10px; padding: 1px 6px;
+}
+.filter-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dot-open { background: var(--red); }
+.dot-progress { background: var(--yellow); }
+.dot-done { background: var(--green); }
+.dot-all { background: var(--blue); }
+
+/* MAIN */
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+#main-toolbar {
+  padding: 10px 16px; background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+#main-toolbar input[type=text] {
+  flex: 1; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); padding: 6px 12px; font-size: 13px;
+  font-family: var(--font); outline: none;
+}
+#main-toolbar input:focus { border-color: var(--accent); }
+#stavby-select {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); padding: 6px 10px; font-size: 13px;
+  font-family: var(--font); outline: none; cursor: pointer;
+}
+#list-area { flex: 1; overflow-y: auto; padding: 12px 16px; }
+
+/* CARDS */
+.zavada-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 10px; margin-bottom: 10px; overflow: hidden;
+  cursor: pointer; transition: .15s;
+  display: flex;
+}
+.zavada-card:hover { border-color: var(--accent); }
+.zavada-card.selected { border-color: var(--accent); }
+.card-thumb {
+  width: 100px; min-width: 100px; height: 80px;
+  background: var(--bg3);
+  object-fit: cover;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text3); font-size: 28px;
+}
+.card-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.card-body { flex: 1; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.card-top { display: flex; align-items: flex-start; gap: 8px; }
+.card-title { font-size: 13px; font-weight: 500; color: var(--text); flex: 1; line-height: 1.4; }
+.badge {
+  font-size: 10px; font-weight: 600; border-radius: 4px; padding: 2px 7px;
+  white-space: nowrap; font-family: var(--mono);
+}
+.badge-open { background: rgba(224,82,82,.15); color: var(--red); border: 1px solid rgba(224,82,82,.3); }
+.badge-progress { background: rgba(245,200,66,.12); color: var(--yellow); border: 1px solid rgba(245,200,66,.3); }
+.badge-done { background: rgba(76,175,130,.12); color: var(--green); border: 1px solid rgba(76,175,130,.3); }
+.card-meta { font-size: 11px; color: var(--text3); display: flex; gap: 10px; }
+.card-meta span { display: flex; align-items: center; gap: 3px; }
+
+/* DETAIL PANEL */
+#detail-panel {
+  width: 440px; min-width: 440px;
+  background: var(--bg2);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  transition: .2s;
+}
+#detail-panel.hidden { width: 0; min-width: 0; overflow: hidden; }
+#detail-header {
+  padding: 12px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+}
+#detail-header .det-title { font-size: 14px; font-weight: 600; flex: 1; }
+#detail-body { flex: 1; overflow-y: auto; padding: 0; }
+
+/* PHOTO ANNOTATOR */
+#photo-section { position: relative; background: #000; }
+#photo-canvas-wrap {
+  position: relative; width: 100%; cursor: crosshair;
+  user-select: none;
+}
+#photo-canvas-wrap img { width: 100%; display: block; }
+#annotation-svg {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none;
+}
+.ann-tool-bar {
+  background: var(--bg3); border-bottom: 1px solid var(--border);
+  padding: 6px 10px; display: flex; gap: 6px; align-items: center;
+  flex-wrap: wrap;
+}
+.ann-btn {
+  padding: 4px 10px; font-size: 11px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--bg2);
+  color: var(--text2); cursor: pointer; font-family: var(--font);
+  transition: .1s;
+}
+.ann-btn:hover, .ann-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+.ann-color { width: 18px; height: 18px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
+.ann-color.selected { border-color: #fff; }
+
+/* DETAIL FIELDS */
+.detail-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.detail-section:last-child { border-bottom: none; }
+.field-label { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 5px; }
+.field-val { font-size: 13px; color: var(--text); }
+.field-row { display: flex; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.field-group { flex: 1; min-width: 120px; }
+
+/* STATUS BUTTONS */
+.status-btn-group { display: flex; gap: 6px; flex-wrap: wrap; }
+.status-btn {
+  flex: 1; padding: 7px 8px; font-size: 12px; font-weight: 500;
+  border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg3); color: var(--text2); cursor: pointer;
+  font-family: var(--font); transition: .12s; text-align: center;
+}
+.status-btn:hover { border-color: var(--accent); color: var(--text); }
+.status-btn.active-open { background: rgba(224,82,82,.15); color: var(--red); border-color: var(--red); }
+.status-btn.active-progress { background: rgba(245,200,66,.12); color: var(--yellow); border-color: var(--yellow); }
+.status-btn.active-done { background: rgba(76,175,130,.12); color: var(--green); border-color: var(--green); }
+
+/* COMMENTS */
+.comment { display: flex; gap: 8px; margin-bottom: 8px; }
+.comment-avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--bg3); display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 600; color: var(--accent); flex-shrink: 0;
+}
+.comment-bubble { flex: 1; }
+.comment-meta { font-size: 10px; color: var(--text3); margin-bottom: 2px; }
+.comment-text { font-size: 12px; color: var(--text); background: var(--bg3); border-radius: 6px; padding: 6px 9px; line-height: 1.5; }
+.comment-input-row { display: flex; gap: 6px; margin-top: 6px; }
+.comment-input-row input {
+  flex: 1; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); padding: 6px 10px; font-size: 12px;
+  font-family: var(--font); outline: none;
+}
+.comment-input-row input:focus { border-color: var(--accent); }
+
+/* MODAL */
+#modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.7); z-index: 1000;
+  align-items: center; justify-content: center;
+  padding: 20px;
+}
+#modal-overlay.open { display: flex; }
+#modal {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 12px; width: 100%; max-width: 560px;
+  max-height: 90vh; overflow-y: auto;
+  padding: 20px;
+}
+#modal h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: var(--accent); }
+.form-group { margin-bottom: 12px; }
+.form-group label { display: block; font-size: 11px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: .7px; margin-bottom: 5px; }
+.form-group input, .form-group textarea, .form-group select {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); padding: 8px 11px; font-size: 13px;
+  font-family: var(--font); outline: none;
+}
+.form-group input:focus, .form-group textarea:focus, .form-group select:focus { border-color: var(--accent); }
+.form-group textarea { resize: vertical; min-height: 70px; }
+.form-row { display: flex; gap: 10px; }
+.form-row .form-group { flex: 1; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+/* PHOTO UPLOAD in modal */
+#photo-upload-area {
+  border: 2px dashed var(--border); border-radius: 8px;
+  padding: 20px; text-align: center; cursor: pointer;
+  color: var(--text3); font-size: 13px; transition: .15s;
+  position: relative;
+}
+#photo-upload-area:hover, #photo-upload-area.drag { border-color: var(--accent); color: var(--accent); }
+#photo-upload-area input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+#photo-preview { max-width: 100%; max-height: 200px; margin-top: 8px; border-radius: 6px; display: none; }
+
+/* LOGIN */
+#login-screen {
+  position: fixed; inset: 0; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; z-index: 2000;
+}
+.login-box {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 14px; padding: 32px 28px; width: 320px;
+}
+.login-box h1 { font-size: 22px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+.login-box p { font-size: 12px; color: var(--text3); margin-bottom: 24px; }
+.login-box .form-group label { color: var(--text2); }
+
+/* EMPTY STATE */
+.empty-state { text-align: center; padding: 60px 20px; color: var(--text3); }
+.empty-state .emo { font-size: 40px; margin-bottom: 12px; }
+.empty-state p { font-size: 14px; }
+
+/* LOADING */
+#loading { position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px; }
+.spinner { width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite; }
+@keyframes spin { to{transform:rotate(360deg)} }
+
+/* SCROLLBAR */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ANNOTATE CANVAS */
+#ann-canvas {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  cursor: crosshair;
+}
+</style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading">
+  <div class="spinner"></div>
+  <span style="font-size:13px;color:var(--text2)">Načítavam...</span>
+</div>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <h1>◉ SiteFix</h1>
+    <p>Správa nedorobkov a opráv na stavbe</p>
+    <div class="form-group">
+      <label>Používateľ</label>
+      <select id="login-user">
+        <option value="">— Vyber používateľa —</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>PIN kód</label>
+      <input type="password" id="login-pin" placeholder="••••" maxlength="6">
+    </div>
+    <div id="login-err" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none;">Nesprávny PIN</div>
+    <button class="btn btn-primary" style="width:100%" onclick="doLogin()">Prihlásiť sa</button>
+  </div>
+</div>
+
+<!-- HEADER -->
+<div id="header">
+  <div class="logo">◉ SiteFix <span>// Nedorobky</span></div>
+  <div id="header-actions">
+    <span id="userLabel"></span>
+    <button class="btn btn-primary btn-sm" onclick="openNewModal()">+ Nový nedorobok</button>
+    <button class="btn btn-ghost btn-sm" onclick="logout()">Odhlásiť</button>
+  </div>
+</div>
+
+<!-- LAYOUT -->
+<div id="layout">
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <div id="sidebar-header">Stav závad</div>
+    <div id="filter-list">
+      <div class="filter-item active" data-filter="all" onclick="setFilter('all',this)">
+        <span class="filter-dot dot-all"></span> Všetky
+        <span class="count" id="cnt-all">0</span>
+      </div>
+      <div class="filter-item" data-filter="open" onclick="setFilter('open',this)">
+        <span class="filter-dot dot-open"></span> Otvorené
+        <span class="count" id="cnt-open">0</span>
+      </div>
+      <div class="filter-item" data-filter="progress" onclick="setFilter('progress',this)">
+        <span class="filter-dot dot-progress"></span> V riešení
+        <span class="count" id="cnt-progress">0</span>
+      </div>
+      <div class="filter-item" data-filter="done" onclick="setFilter('done',this)">
+        <span class="filter-dot dot-done"></span> Vyriešené
+        <span class="count" id="cnt-done">0</span>
+      </div>
+      <div style="height:1px;background:var(--border);margin:8px 4px;"></div>
+      <div id="sidebar-header" style="padding:8px 10px 4px;font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Stavby</div>
+      <div id="stavby-filter-list"></div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main">
+    <div id="main-toolbar">
+      <input type="text" id="search-input" placeholder="🔍  Hľadaj popis, miesto, zodpovednú osobu..." oninput="renderList()">
+      <select id="stavby-select" onchange="renderList()">
+        <option value="">Všetky stavby</option>
+      </select>
+    </div>
+    <div id="list-area">
+      <div class="empty-state" id="empty-state" style="display:none">
+        <div class="emo">📋</div>
+        <p>Žiadne nedorobky nevyhovujú filtru.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- DETAIL PANEL -->
+  <div id="detail-panel" class="hidden">
+    <div id="detail-header">
+      <div class="det-title" id="det-title">–</div>
+      <button class="btn btn-ghost btn-sm" onclick="closeDetail()">✕</button>
+    </div>
+    <div id="detail-body"></div>
+  </div>
+</div>
+
+<!-- NEW ZÁVADA MODAL -->
+<div id="modal-overlay">
+  <div id="modal">
+    <h2>+ Nový nedorobok</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Stavba / Objekt</label>
+        <select id="f-stavba">
+          <option value="">– Vyber –</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Kategória</label>
+        <select id="f-kategoria">
+          <option>Murárske práce</option>
+          <option>Elektroinštalácia</option>
+          <option>Voda / Kanalizácia</option>
+          <option>Strecha / Izolácia</option>
+          <option>Obklady / Dlažba</option>
+          <option>Omietky / Maľba</option>
+          <option>Okná / Dvere</option>
+          <option>Bozp / Bezpečnosť</option>
+          <option>Iné</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Popis nedorobku</label>
+      <textarea id="f-popis" placeholder="Čo je nedorobok, kde presne, čo treba opraviť..."></textarea>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Miesto (napr. 2. poschodie, izba 204)</label>
+        <input type="text" id="f-miesto" placeholder="Miesto na stavbe">
+      </div>
+      <div class="form-group">
+        <label>Zodpovedná osoba / firma</label>
+        <input type="text" id="f-zodpovedny" placeholder="Kto to má opraviť">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Termín opravy</label>
+        <input type="date" id="f-termin">
+      </div>
+      <div class="form-group">
+        <label>Priorita</label>
+        <select id="f-priorita">
+          <option value="normal">Normálna</option>
+          <option value="high">Vysoká</option>
+          <option value="critical">Kritická</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Fotografia</label>
+      <div id="photo-upload-area" onclick="document.getElementById('f-photo-input').click()">
+        <input type="file" id="f-photo-input" accept="image/*" style="position:absolute;inset:0;opacity:0;cursor:pointer" onchange="previewPhoto(this)">
+        <div id="photo-upload-text">📸 Klikni alebo pretiahni fotku sem</div>
+        <img id="photo-preview" src="" alt="">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Zrušiť</button>
+      <button class="btn btn-primary" onclick="saveZavada()">Uložiť nedorobok</button>
+    </div>
+  </div>
+</div>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+<script>
+// ====================== FIREBASE CONFIG ======================
+// 👇 ZMEŇ NA SVOJU FIREBASE KONFIGURÁCIU
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB2gLq6UzzjpijSlaTV3HMPEq6_KJgW5RA",
+  authDomain: "register-naradia.firebaseapp.com",
+  databaseURL: "https://register-naradia-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "register-naradia",
+  storageBucket: "register-naradia.firebasestorage.app",
+  messagingSenderId: "931257476693",
+  appId: "1:931257476693:web:9b766eac323100564296dc"
+};
+
+// ============================================================
+// Ak chceš používať demo mód bez Firebase, nastav:
+const DEMO_MODE = false; // ← prepni na false keď máš Firebase
+// ============================================================
+
+let db = null;
+let currentUser = null;
+let currentFilter = 'all';
+let currentStavba = '';
+let selectedZavadaId = null;
+let allZavady = {};
+let allStavby = {};
+let allUsers = {};
+
+// DEMO DATA
+const DEMO_USERS = {
+  u1: { meno: 'Admin', pin: '0000', rola: 'admin' },
+  u2: { meno: 'Stavbyvedúci', pin: '1111', rola: 'stavbyvedúci' },
+  u3: { meno: 'Pracovník', pin: '2222', rola: 'pracovník' },
+};
+const DEMO_STAVBY = {
+  TRE_138: { nazov: 'Trenčín 138', adresa: 'Trenčín' },
+  MOD_140: { nazov: 'Modra 140', adresa: 'Modra' },
+  EXT_000: { nazov: 'Externé práce', adresa: '' },
+};
+const DEMO_ZAVADY = {
+  z1: {
+    popis: 'Prasklina v omietke pri okne na chodbičke',
+    kategoria: 'Omietky / Maľba',
+    miesto: '2. poschodie, chodba',
+    zodpovedny: 'Kiss Béla',
+    stavba: 'TRE_138',
+    stav: 'open',
+    priorita: 'high',
+    termin: '2026-06-10',
+    foto: null,
+    anotacie: [],
+    autor: 'Karcsi',
+    created: Date.now() - 86400000 * 3,
+    komentare: [
+      { text: 'Treba to opraviť čo najskôr, zákazník si všimol', autor: 'Karcsi', cas: Date.now() - 86400000 * 2 },
+    ]
+  },
+  z2: {
+    popis: 'Zle nainštalovaný vypínač v kuchyni – nie je priložený k stene',
+    kategoria: 'Elektroinštalácia',
+    miesto: '1. poschodie, kuchyňa',
+    zodpovedny: 'Novák Elektro s.r.o.',
+    stavba: 'TRE_138',
+    stav: 'progress',
+    priorita: 'normal',
+    termin: '2026-06-05',
+    foto: null,
+    anotacie: [],
+    autor: 'Zsani',
+    created: Date.now() - 86400000,
+    komentare: []
+  },
+  z3: {
+    popis: 'Zatekanie strešného okna pri daždi',
+    kategoria: 'Strecha / Izolácia',
+    miesto: 'Podkrovie',
+    zodpovedny: 'Krovat s.r.o.',
+    stavba: 'MOD_140',
+    stav: 'done',
+    priorita: 'critical',
+    termin: '2026-05-30',
+    foto: null,
+    anotacie: [],
+    autor: 'Karcsi',
+    created: Date.now() - 86400000 * 7,
+    komentare: [
+      { text: 'Opravené dnes ráno, tmel dosadol', autor: 'Kiss', cas: Date.now() - 3600000 },
+    ]
+  },
+};
+
+// =========== INIT ===========
+function initApp() {
+  if (DEMO_MODE) {
+    allUsers = DEMO_USERS;
+    allStavby = DEMO_STAVBY;
+    allZavady = DEMO_ZAVADY;
+    hideLoading();
+    populateLoginUsers();
+  } else {
+    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.database();
+    Promise.all([
+      db.ref('sitefix_users').once('value').then(s => { allUsers = s.val() || {}; }),
+      db.ref('sitefix_stavby').once('value').then(s => { allStavby = s.val() || {}; }),
+    ]).then(() => {
+      hideLoading();
+      populateLoginUsers();
+      // live závady
+      db.ref('sitefix_issues').on('value', snap => {
+        allZavady = snap.val() || {};
+        if (currentUser) { renderList(); updateCounts(); }
+      });
+    });
+  }
+}
+
+function hideLoading() { document.getElementById('loading').style.display = 'none'; }
+
+// =========== LOGIN ===========
+function populateLoginUsers() {
+  const sel = document.getElementById('login-user');
+  sel.innerHTML = '<option value="">— Vyber používateľa —</option>';
+  Object.entries(allUsers).forEach(([id, u]) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = u.meno + ' (' + (u.rola || '') + ')';
+    sel.appendChild(opt);
+  });
+}
+
+document.getElementById('login-pin').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+function doLogin() {
+  const uid = document.getElementById('login-user').value;
+  const pin = document.getElementById('login-pin').value;
+  if (!uid) return;
+  const u = allUsers[uid];
+  if (!u) return;
+  if (String(u.pin) !== String(pin)) {
+    document.getElementById('login-err').style.display = 'block';
+    return;
+  }
+  document.getElementById('login-err').style.display = 'none';
+  currentUser = { id: uid, ...u };
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('userLabel').textContent = u.meno + ' · ' + (u.rola || '');
+  populateStavbySelects();
+  renderSidebar();
+  renderList();
+  updateCounts();
+
+  if (!DEMO_MODE) {
+    db.ref('sitefix_issues').on('value', snap => {
+      allZavady = snap.val() || {};
+      renderList(); updateCounts();
+    });
+  }
+}
+
+function logout() {
+  currentUser = null;
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('login-pin').value = '';
+  closeDetail();
+}
+
+// =========== STAVBY SELECTS ===========
+function populateStavbySelects() {
+  const opts = Object.entries(allStavby).map(([id, s]) =>
+    `<option value="${id}">${s.nazov}</option>`
+  ).join('');
+  document.getElementById('stavby-select').innerHTML = '<option value="">Všetky stavby</option>' + opts;
+  document.getElementById('f-stavba').innerHTML = '<option value="">– Vyber –</option>' + opts;
+}
+
+function renderSidebar() {
+  const list = document.getElementById('stavby-filter-list');
+  list.innerHTML = Object.entries(allStavby).map(([id, s]) => `
+    <div class="filter-item" data-stavba="${id}" onclick="setStavbaFilter('${id}',this)">
+      <span style="font-size:14px">🏗</span> ${s.nazov}
+    </div>
+  `).join('') + `
+    <div class="filter-item" data-stavba="" onclick="setStavbaFilter('',this)">
+      <span style="font-size:14px">📋</span> Všetky stavby
+    </div>
+  `;
+}
+
+// =========== FILTERS ===========
+function setFilter(f, el) {
+  currentFilter = f;
+  document.querySelectorAll('#filter-list .filter-item[data-filter]').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  renderList();
+}
+
+function setStavbaFilter(id, el) {
+  currentStavba = id;
+  document.getElementById('stavby-select').value = id;
+  document.querySelectorAll('#stavby-filter-list .filter-item').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  renderList();
+}
+
+// =========== COUNTS ===========
+function updateCounts() {
+  const z = Object.values(allZavady);
+  document.getElementById('cnt-all').textContent = z.length;
+  document.getElementById('cnt-open').textContent = z.filter(x => x.stav === 'open').length;
+  document.getElementById('cnt-progress').textContent = z.filter(x => x.stav === 'progress').length;
+  document.getElementById('cnt-done').textContent = z.filter(x => x.stav === 'done').length;
+}
+
+// =========== RENDER LIST ===========
+function renderList() {
+  const area = document.getElementById('list-area');
+  const search = document.getElementById('search-input').value.toLowerCase();
+  const stavbaFilter = document.getElementById('stavby-select').value || currentStavba;
+
+  let entries = Object.entries(allZavady);
+
+  if (currentFilter !== 'all') entries = entries.filter(([,z]) => z.stav === currentFilter);
+  if (stavbaFilter) entries = entries.filter(([,z]) => z.stavba === stavbaFilter);
+  if (search) entries = entries.filter(([,z]) =>
+    (z.popis||'').toLowerCase().includes(search) ||
+    (z.miesto||'').toLowerCase().includes(search) ||
+    (z.zodpovedny||'').toLowerCase().includes(search) ||
+    (z.kategoria||'').toLowerCase().includes(search)
+  );
+
+  entries.sort(([,a],[,b]) => (b.created||0) - (a.created||0));
+
+  updateCounts();
+
+  if (entries.length === 0) {
+    area.innerHTML = '';
+    document.getElementById('empty-state').style.display = 'block';
+    area.appendChild(document.getElementById('empty-state'));
+    document.getElementById('empty-state').style.display = 'block';
+    return;
+  }
+  document.getElementById('empty-state').style.display = 'none';
+
+  area.innerHTML = entries.map(([id, z]) => {
+    const stavbaNazov = allStavby[z.stavba]?.nazov || z.stavba || '–';
+    const badge = z.stav === 'open' ? `<span class="badge badge-open">Otvorená</span>`
+      : z.stav === 'progress' ? `<span class="badge badge-progress">V riešení</span>`
+      : `<span class="badge badge-done">Vyriešená</span>`;
+    const priorityIcon = z.priorita === 'critical' ? '🔴' : z.priorita === 'high' ? '🟠' : '🟡';
+    const dateStr = z.created ? new Date(z.created).toLocaleDateString('sk-SK') : '';
+    const thumb = z.foto
+      ? `<div class="card-thumb"><img src="${z.foto}" alt=""></div>`
+      : `<div class="card-thumb" style="font-size:24px">📷</div>`;
+    const kComments = (z.komentare ? Object.values(z.komentare).length : 0);
+    return `
+      <div class="zavada-card ${selectedZavadaId === id ? 'selected' : ''}" onclick="openDetail('${id}')">
+        ${thumb}
+        <div class="card-body">
+          <div class="card-top">
+            <div class="card-title">${priorityIcon} ${z.popis || '–'}</div>
+            ${badge}
+          </div>
+          <div class="card-meta">
+            <span>🏗 ${stavbaNazov}</span>
+            <span>📍 ${z.miesto || '–'}</span>
+            <span>👷 ${z.zodpovedny || '–'}</span>
+          </div>
+          <div class="card-meta" style="margin-top:2px">
+            <span>📅 ${dateStr}</span>
+            <span>🏷 ${z.kategoria || ''}</span>
+            ${kComments > 0 ? `<span>💬 ${kComments}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// =========== DETAIL PANEL ===========
+function openDetail(id) {
+  selectedZavadaId = id;
+  const z = allZavady[id];
+  if (!z) return;
+  renderList();
+  const panel = document.getElementById('detail-panel');
+  panel.classList.remove('hidden');
+  document.getElementById('det-title').textContent = z.popis || '–';
+  renderDetailBody(id, z);
+}
+
+function closeDetail() {
+  selectedZavadaId = null;
+  document.getElementById('detail-panel').classList.add('hidden');
+  renderList();
+}
+
+function renderDetailBody(id, z) {
+  const stavbaNazov = allStavby[z.stavba]?.nazov || z.stavba || '–';
+  const terminStr = z.termin ? new Date(z.termin).toLocaleDateString('sk-SK') : '–';
+  const createdStr = z.created ? new Date(z.created).toLocaleString('sk-SK') : '–';
+
+  const priorityLabel = { normal: 'Normálna', high: 'Vysoká', critical: 'Kritická' }[z.priorita] || z.priorita;
+  const priorityColor = { normal: 'var(--text2)', high: 'var(--yellow)', critical: 'var(--red)' }[z.priorita] || 'var(--text2)';
+
+  const komentare = z.komentare ? Object.values(z.komentare) : [];
+
+  // STATUS buttons - only stavbyvedúci / admin can change
+  const canChangeStatus = currentUser && (currentUser.rola === 'admin' || currentUser.rola === 'stavbyvedúci');
+  const statusBtns = canChangeStatus ? `
+    <div class="status-btn-group">
+      <div class="status-btn ${z.stav==='open'?'active-open':''}" onclick="setStatus('${id}','open')">🔴 Otvorená</div>
+      <div class="status-btn ${z.stav==='progress'?'active-progress':''}" onclick="setStatus('${id}','progress')">🟡 V riešení</div>
+      <div class="status-btn ${z.stav==='done'?'active-done':''}" onclick="setStatus('${id}','done')">✅ Vyriešená</div>
+    </div>
+  ` : `<div style="font-size:13px;color:var(--text2)">${z.stav === 'open' ? '🔴 Otvorená' : z.stav === 'progress' ? '🟡 V riešení' : '✅ Vyriešená'}</div>`;
+
+  // Photo + annotator
+  const photoSection = z.foto ? `
+    <div class="detail-section" style="padding:0">
+      <div class="ann-tool-bar" id="ann-toolbar">
+        <span style="font-size:11px;color:var(--text3);margin-right:4px">Kresliť:</span>
+        <div class="ann-btn active" id="ann-none" onclick="setAnnTool('none')">✋ Žiadne</div>
+        <div class="ann-btn" id="ann-arrow" onclick="setAnnTool('arrow')">➡ Šípka</div>
+        <div class="ann-btn" id="ann-circle" onclick="setAnnTool('circle')">⭕ Krúžok</div>
+        <div class="ann-btn" id="ann-rect" onclick="setAnnTool('rect')">▭ Rám</div>
+        <div style="margin-left:auto;display:flex;gap:4px;align-items:center">
+          <div class="ann-color selected" style="background:#f5a623" data-color="#f5a623" onclick="setAnnColor('#f5a623',this)"></div>
+          <div class="ann-color" style="background:#e05252" data-color="#e05252" onclick="setAnnColor('#e05252',this)"></div>
+          <div class="ann-color" style="background:#5b9cf6" data-color="#5b9cf6" onclick="setAnnColor('#5b9cf6',this)"></div>
+          <button class="ann-btn btn-sm" style="margin-left:6px" onclick="clearAnnotations('${id}')">🗑 Zmaž</button>
+          <button class="ann-btn btn-sm" onclick="saveAnnotations('${id}')">💾 Ulož</button>
+        </div>
+      </div>
+      <div id="photo-canvas-wrap" style="position:relative;cursor:crosshair;user-select:none">
+        <img id="det-photo" src="${z.foto}" style="width:100%;display:block" draggable="false">
+        <canvas id="ann-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair"></canvas>
+      </div>
+    </div>
+  ` : `<div class="detail-section" style="text-align:center;padding:24px;color:var(--text3);font-size:13px">📷 Žiadna fotografia</div>`;
+
+  document.getElementById('detail-body').innerHTML = `
+    ${photoSection}
+
+    <div class="detail-section">
+      <div class="field-label">Stav nedorobku</div>
+      ${statusBtns}
+    </div>
+
+    <div class="detail-section">
+      <div class="field-row">
+        <div class="field-group"><div class="field-label">Stavba</div><div class="field-val">🏗 ${stavbaNazov}</div></div>
+        <div class="field-group"><div class="field-label">Kategória</div><div class="field-val">🏷 ${z.kategoria||'–'}</div></div>
+      </div>
+      <div class="field-row">
+        <div class="field-group"><div class="field-label">Miesto</div><div class="field-val">📍 ${z.miesto||'–'}</div></div>
+        <div class="field-group"><div class="field-label">Zodpovedný</div><div class="field-val">👷 ${z.zodpovedny||'–'}</div></div>
+      </div>
+      <div class="field-row">
+        <div class="field-group"><div class="field-label">Termín opravy</div><div class="field-val">📅 ${terminStr}</div></div>
+        <div class="field-group"><div class="field-label">Priorita</div><div class="field-val" style="color:${priorityColor}">${priorityLabel}</div></div>
+      </div>
+      <div class="field-label" style="margin-top:6px">Popis</div>
+      <div class="field-val" style="line-height:1.6">${z.popis||'–'}</div>
+      <div class="field-label" style="margin-top:8px">Zadal / Dátum</div>
+      <div class="field-val" style="color:var(--text2)">${z.autor||'–'} · ${createdStr}</div>
+    </div>
+
+    <div class="detail-section">
+      <div class="field-label">Komentáre a reakcie</div>
+      <div id="comments-list">
+        ${komentare.length === 0 ? '<div style="font-size:12px;color:var(--text3)">Žiadne komentáre.</div>' :
+          komentare.map(k => `
+            <div class="comment">
+              <div class="comment-avatar">${(k.autor||'?')[0].toUpperCase()}</div>
+              <div class="comment-bubble">
+                <div class="comment-meta">${k.autor||'?'} · ${k.cas ? new Date(k.cas).toLocaleString('sk-SK') : ''}</div>
+                <div class="comment-text">${k.text}</div>
+              </div>
+            </div>
+          `).join('')}
+      </div>
+      <div class="comment-input-row">
+        <input type="text" id="comment-input" placeholder="Napíš komentár... (Enter)">
+        <button class="btn btn-primary btn-sm" onclick="addComment('${id}')">Odoslať</button>
+      </div>
+    </div>
+
+    ${canChangeStatus ? `
+    <div class="detail-section">
+      <button class="btn btn-danger btn-sm" onclick="deleteZavada('${id}')">🗑 Vymazať nedorobok</button>
+    </div>` : ''}
+  `;
+
+  // Init canvas annotator
+  if (z.foto) {
+    setTimeout(() => initAnnotator(id, z), 100);
+  }
+
+  document.getElementById('comment-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') addComment(id);
+  });
+}
+
+// =========== STATUS ===========
+function setStatus(id, status) {
+  const labels = { open: 'Otvorená', progress: 'V riešení', done: 'Vyriešená' };
+  if (!DEMO_MODE && db) {
+    db.ref('sitefix_issues/' + id + '/stav').set(status);
+    db.ref('sitefix_issues/' + id + '/komentare').push({
+      text: `Stav zmenený na: ${labels[status]}`,
+      autor: currentUser.meno,
+      cas: Date.now()
+    });
+  } else {
+    allZavady[id].stav = status;
+    if (!allZavady[id].komentare) allZavady[id].komentare = {};
+    const key = 'k' + Date.now();
+    allZavady[id].komentare[key] = {
+      text: `Stav zmenený na: ${labels[status]}`,
+      autor: currentUser.meno,
+      cas: Date.now()
+    };
+    openDetail(id);
+    renderList();
+    updateCounts();
+  }
+}
+
+// =========== COMMENTS ===========
+function addComment(id) {
+  const inp = document.getElementById('comment-input');
+  const text = inp.value.trim();
+  if (!text) return;
+  const comment = { text, autor: currentUser.meno, cas: Date.now() };
+  if (!DEMO_MODE && db) {
+    db.ref('sitefix_issues/' + id + '/komentare').push(comment);
+  } else {
+    if (!allZavady[id].komentare) allZavady[id].komentare = {};
+    allZavady[id].komentare['k' + Date.now()] = comment;
+    openDetail(id);
+  }
+  inp.value = '';
+}
+
+// =========== DELETE ===========
+function deleteZavada(id) {
+  if (!confirm('Naozaj vymazať tento nedorobok?')) return;
+  if (!DEMO_MODE && db) {
+    db.ref('sitefix_issues/' + id).remove();
+  } else {
+    delete allZavady[id];
+    closeDetail();
+    renderList();
+    updateCounts();
+  }
+}
+
+// =========== ANNOTATOR ===========
+let annTool = 'none';
+let annColor = '#f5a623';
+let drawing = false;
+let startX, startY;
+let annotations = [];
+let currentAnnId = null;
+let annCtx = null;
+let annCanvas = null;
+let annImg = null;
+
+function setAnnTool(tool) {
+  annTool = tool;
+  document.querySelectorAll('.ann-btn[id^="ann-"]').forEach(b => b.classList.remove('active'));
+  const el = document.getElementById('ann-' + tool);
+  if (el) el.classList.add('active');
+}
+
+function setAnnColor(c, el) {
+  annColor = c;
+  document.querySelectorAll('.ann-color').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+function initAnnotator(id, z) {
+  annCanvas = document.getElementById('ann-canvas');
+  annImg = document.getElementById('det-photo');
+  if (!annCanvas || !annImg) return;
+  currentAnnId = id;
+  annotations = (z.anotacie && Array.isArray(z.anotacie)) ? [...z.anotacie] : [];
+
+  function syncCanvasSize() {
+    annCanvas.width = annImg.offsetWidth;
+    annCanvas.height = annImg.offsetHeight;
+    redraw();
+  }
+  annImg.onload = syncCanvasSize;
+  setTimeout(syncCanvasSize, 50);
+
+  annCtx = annCanvas.getContext('2d');
+  annCanvas.onmousedown = startDraw;
+  annCanvas.onmousemove = moveDraw;
+  annCanvas.onmouseup = endDraw;
+  annCanvas.ontouchstart = e => { e.preventDefault(); const t = e.touches[0]; startDraw({offsetX: t.clientX - annCanvas.getBoundingClientRect().left, offsetY: t.clientY - annCanvas.getBoundingClientRect().top}); };
+  annCanvas.ontouchmove = e => { e.preventDefault(); const t = e.touches[0]; moveDraw({offsetX: t.clientX - annCanvas.getBoundingClientRect().left, offsetY: t.clientY - annCanvas.getBoundingClientRect().top}); };
+  annCanvas.ontouchend = endDraw;
+}
+
+function getScale() {
+  if (!annImg || !annCanvas) return 1;
+  return annImg.naturalWidth / annImg.offsetWidth;
+}
+
+function startDraw(e) {
+  if (annTool === 'none') return;
+  drawing = true;
+  startX = e.offsetX; startY = e.offsetY;
+}
+function moveDraw(e) {
+  if (!drawing) return;
+  redraw();
+  const ctx = annCtx;
+  ctx.save();
+  ctx.strokeStyle = annColor;
+  ctx.fillStyle = annColor;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.85;
+  drawShape(ctx, annTool, startX, startY, e.offsetX, e.offsetY);
+  ctx.restore();
+}
+function endDraw(e) {
+  if (!drawing) return;
+  drawing = false;
+  let ex = e.offsetX || startX + 20, ey = e.offsetY || startY + 20;
+  const scale = getScale();
+  annotations.push({
+    type: annTool,
+    x1: startX / annCanvas.width,
+    y1: startY / annCanvas.height,
+    x2: ex / annCanvas.width,
+    y2: ey / annCanvas.height,
+    color: annColor
+  });
+  redraw();
+}
+
+function drawShape(ctx, type, x1, y1, x2, y2) {
+  if (type === 'circle') {
+    const rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
+    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx || 10, ry || 10, 0, 0, Math.PI * 2);
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  } else if (type === 'rect') {
+    ctx.beginPath();
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  } else if (type === 'arrow') {
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    const hs = 12;
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - hs * Math.cos(angle - 0.4), y2 - hs * Math.sin(angle - 0.4));
+    ctx.lineTo(x2 - hs * Math.cos(angle + 0.4), y2 - hs * Math.sin(angle + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function redraw() {
+  if (!annCtx || !annCanvas) return;
+  annCtx.clearRect(0, 0, annCanvas.width, annCanvas.height);
+  annotations.forEach(a => {
+    annCtx.save();
+    annCtx.strokeStyle = a.color || '#f5a623';
+    annCtx.fillStyle = a.color || '#f5a623';
+    annCtx.globalAlpha = 0.85;
+    const x1 = a.x1 * annCanvas.width, y1 = a.y1 * annCanvas.height;
+    const x2 = a.x2 * annCanvas.width, y2 = a.y2 * annCanvas.height;
+    drawShape(annCtx, a.type, x1, y1, x2, y2);
+    annCtx.restore();
+  });
+}
+
+function clearAnnotations(id) {
+  annotations = [];
+  if (annCtx && annCanvas) annCtx.clearRect(0, 0, annCanvas.width, annCanvas.height);
+}
+
+function saveAnnotations(id) {
+  if (!DEMO_MODE && db) {
+    db.ref('sitefix_issues/' + id + '/anotacie').set(annotations);
+  } else {
+    allZavady[id].anotacie = [...annotations];
+  }
+  alert('Anotácie uložené!');
+}
+
+// =========== NEW ZÁVADA MODAL ===========
+function openNewModal() {
+  document.getElementById('modal-overlay').classList.add('open');
+  // reset
+  ['f-popis','f-miesto','f-zodpovedny','f-termin'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f-priorita').value = 'normal';
+  document.getElementById('f-stavba').value = '';
+  document.getElementById('photo-preview').style.display = 'none';
+  document.getElementById('photo-upload-text').style.display = 'block';
+  document.getElementById('f-photo-input').value = '';
+  window._newPhotoData = null;
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+}
+
+function compressImage(dataUrl, callback) {
+  const img = new Image();
+  img.onload = () => {
+    const MAX = 1200;
+    let w = img.width, h = img.height;
+    if (w > MAX || h > MAX) {
+      if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+      else { w = Math.round(w * MAX / h); h = MAX; }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    callback(canvas.toDataURL('image/jpeg', 0.75));
+  };
+  img.src = dataUrl;
+}
+
+function previewPhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    compressImage(e.target.result, compressed => {
+      const img = document.getElementById('photo-preview');
+      img.src = compressed;
+      img.style.display = 'block';
+      document.getElementById('photo-upload-text').style.display = 'none';
+      window._newPhotoData = compressed;
+    });
+  };
+  reader.readAsDataURL(file);
+}
+
+function saveZavada() {
+  const popis = document.getElementById('f-popis').value.trim();
+  if (!popis) { alert('Vyplň popis závady!'); return; }
+  const zavada = {
+    popis,
+    kategoria: document.getElementById('f-kategoria').value,
+    miesto: document.getElementById('f-miesto').value.trim(),
+    zodpovedny: document.getElementById('f-zodpovedny').value.trim(),
+    stavba: document.getElementById('f-stavba').value,
+    stav: 'open',
+    priorita: document.getElementById('f-priorita').value,
+    termin: document.getElementById('f-termin').value,
+    foto: window._newPhotoData || null,
+    anotacie: [],
+    autor: currentUser.meno,
+    created: Date.now(),
+    komentare: {}
+  };
+
+  if (!DEMO_MODE && db) {
+    db.ref('sitefix_issues').push(zavada);
+  } else {
+    const id = 'z' + Date.now();
+    allZavady[id] = zavada;
+    renderList();
+    updateCounts();
+  }
+  closeModal();
+}
+
+// =========== DRAG UPLOAD ===========
+const uploadArea = document.getElementById('photo-upload-area');
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag'));
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault(); uploadArea.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      compressImage(ev.target.result, compressed => {
+        document.getElementById('photo-preview').src = compressed;
+        document.getElementById('photo-preview').style.display = 'block';
+        document.getElementById('photo-upload-text').style.display = 'none';
+        window._newPhotoData = compressed;
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+});
+
+// =========== START ===========
+window.addEventListener('DOMContentLoaded', initApp);
+</script>
+</body>
+</html>
