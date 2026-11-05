@@ -810,6 +810,27 @@ window.applyUsersRole        = applyUsersRole;
 // ════════════════════════════════════════════════════════════════
 //  NÁRADIE SEARCH / AUTOCOMPLETE
 // ════════════════════════════════════════════════════════════════
+
+// Normalizácia textu pre vyhľadávanie: malé písmená, bez diakritiky
+// "Píla" → "pila", "Zverák" → "zverak", "Ťahač" → "tahac"
+// Odstránenie diakritiky nemení dĺžku reťazca, takže indexy sedia aj pre zvýraznenie.
+function normSearch(s){
+  return String(s==null?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+}
+window.normSearch = normSearch;
+
+// Zvýrazní zhodu v pôvodnom texte (s diakritikou) aj keď hľadaný výraz je bez nej
+function hlMatch(text, q, open, close){
+  const s = String(text==null?'':text);
+  if(!q) return s;
+  const nq = normSearch(q).trim();
+  if(!nq) return s;
+  const idx = normSearch(s).indexOf(nq);
+  if(idx < 0) return s;
+  return s.slice(0,idx) + open + s.slice(idx, idx+nq.length) + close + s.slice(idx+nq.length);
+}
+window.hlMatch = hlMatch;
+
 function initNaradieSearch(searchId, selectId, dropId, itemsFn, onSelect){
   const input  = document.getElementById(searchId);
   const select = document.getElementById(selectId);
@@ -817,9 +838,9 @@ function initNaradieSearch(searchId, selectId, dropId, itemsFn, onSelect){
   if(!input || !select || !drop) return;
 
   function showDrop(query){
-    const q = query.toLowerCase().trim();
+    const q = normSearch(query).trim();
     const items = itemsFn();
-    const filtered = q ? items.filter(i => i.label.toLowerCase().includes(q)) : items;
+    const filtered = q ? items.filter(i => normSearch(i.label).includes(q)) : items;
 
     if(!filtered.length){
       drop.innerHTML = '<div class="ns-item ns-empty">Nenašlo sa žiadne náradie</div>';
@@ -848,12 +869,7 @@ function initNaradieSearch(searchId, selectId, dropId, itemsFn, onSelect){
   }
 
   function highlight(text, q){
-    if(!q) return text;
-    const idx = text.toLowerCase().indexOf(q);
-    if(idx < 0) return text;
-    return text.slice(0,idx)
-      + '<strong style="color:var(--accent)">' + text.slice(idx, idx+q.length) + '</strong>'
-      + text.slice(idx+q.length);
+    return hlMatch(text, q, '<strong style="color:var(--accent)">', '</strong>');
   }
 
   input.addEventListener('input', function(){
@@ -1716,13 +1732,14 @@ function renderNaradiaMgmt(){
 function renderNaradiaMgmtRows(q, countEl){
   const isAdm  = isAdmin();
   const all    = naradiaAktivne();
-  const filtered = q ? all.filter(function(n){
-    return (n.name||'').toLowerCase().includes(q)
-        || String(n.cislo||'').includes(q)
-        || (n.model||'').toLowerCase().includes(q)
-        || (n.sn||'').toLowerCase().includes(q)
-        || (n.kat||'').toLowerCase().includes(q)
-        || (n.pozn||'').toLowerCase().includes(q);
+  const nq = normSearch(q).trim();
+  const filtered = nq ? all.filter(function(n){
+    return normSearch(n.name).includes(nq)
+        || String(n.cislo||'').includes(nq)
+        || normSearch(n.model).includes(nq)
+        || normSearch(n.sn).includes(nq)
+        || normSearch(n.kat).includes(nq)
+        || normSearch(n.pozn).includes(nq);
   }) : all;
 
   if(countEl) countEl.textContent = q
@@ -1731,13 +1748,7 @@ function renderNaradiaMgmtRows(q, countEl){
 
   function hl(text, q){
     if(!q || !text) return text||'';
-    const s = String(text);
-    const idx = s.toLowerCase().indexOf(q);
-    if(idx < 0) return s;
-    return s.slice(0,idx)
-      + '<mark style="background:#FFF3CD;border-radius:2px;padding:0 1px">'
-      + s.slice(idx, idx+q.length) + '</mark>'
-      + s.slice(idx+q.length);
+    return hlMatch(text, q, '<mark style="background:#FFF3CD;border-radius:2px;padding:0 1px">', '</mark>');
   }
 
   const tbody = document.querySelector('#naradia-mgmt-table tbody');
@@ -2167,7 +2178,7 @@ async function saveNaradia(){
   if(!name){toast('Zadajte názov náradia','err');return;}
 
   if(!id){
-    const matches = naradiaArr().filter(n => n.name.toLowerCase() === name.toLowerCase());
+    const matches = naradiaArr().filter(n => normSearch(n.name).trim() === normSearch(name).trim());
     if(matches.length > 0){
       openNaradieMatchModal(matches, {name,model,sn,unit,total,kat,pozn,dennik});
       return;
@@ -3527,18 +3538,13 @@ function initNaradieNameAutocomplete(){
   const drp = document.getElementById('n-name-drop');
 
   function getItems(q){
-    const lq = q.toLowerCase().trim();
+    const lq = normSearch(q).trim();
     const names = [...new Map(naradiaArr().map(n=>[n.name.toLowerCase(), n.name])).values()];
-    return lq ? names.filter(n => n.toLowerCase().includes(lq)) : [];
+    return lq ? names.filter(n => normSearch(n).includes(lq)) : [];
   }
 
   function highlight(text, q){
-    if(!q) return text;
-    const idx = text.toLowerCase().indexOf(q.toLowerCase());
-    if(idx < 0) return text;
-    return text.slice(0,idx)
-      + '<strong style="color:var(--accent)">' + text.slice(idx, idx+q.length) + '</strong>'
-      + text.slice(idx+q.length);
+    return hlMatch(text, q, '<strong style="color:var(--accent)">', '</strong>');
   }
 
   function showDrop(){
